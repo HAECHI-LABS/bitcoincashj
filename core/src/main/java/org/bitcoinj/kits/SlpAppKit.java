@@ -272,7 +272,7 @@ public class SlpAppKit extends WalletKitCore {
             recalculatingTokens = true;
             this.slpUtxos.clear();
             this.slpBalances.clear();
-            List<TransactionOutput> utxos = this.wallet().getAllDustUtxos(false, false);
+            List<TransactionOutput> utxos = this.wallet().getAllDustUtxos(false, false, false);
             ArrayList<SlpUTXO> slpUtxosToAdd = new ArrayList<>();
 
             for (TransactionOutput utxo : utxos) {

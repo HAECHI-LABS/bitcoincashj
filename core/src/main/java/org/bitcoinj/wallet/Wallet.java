@@ -3136,8 +3136,20 @@ public class Wallet extends BaseTaggableObject
         }
         if (pool == Pool.UNSPENT || pool == Pool.PENDING) {
             for (TransactionOutput output : tx.getOutputs()) {
-                if (output.isAvailableForSpending() && output.isMineOrWatched(this) && !output.isFrozen())
-                    myUnspents.add(output);
+                if (output.isAvailableForSpending() && output.isMineOrWatched(this) && !output.isFrozen()) {
+                    long currentTime = System.currentTimeMillis()/1000L;
+                    long unfreezeTime = output.getUnfreezeTime();
+
+                    if(unfreezeTime > 0) {
+                        if(currentTime >= unfreezeTime) {
+                            output.setFrozen(false);
+                            output.setUnfreezeTime(0);
+                            myUnspents.add(output);
+                        }
+                    } else if(unfreezeTime == 0) {
+                        myUnspents.add(output);
+                    }
+                }
             }
         }
         // This is safe even if the listener has been added before, as TransactionConfidence ignores duplicate
@@ -4526,7 +4538,7 @@ public class Wallet extends BaseTaggableObject
      * @param excludeImmatureCoinbases Whether to ignore coinbase outputs that we will be able to spend in future once they mature.
      * @param excludeUnsignable        Whether to ignore outputs that we are tracking but don't have the keys to sign for.
      */
-    public List<TransactionOutput> calculateAllSpendCandidates(boolean excludeImmatureCoinbases, boolean excludeUnsignable, boolean includeDust) {
+    public List<TransactionOutput> calculateAllSpendCandidates(boolean excludeImmatureCoinbases, boolean excludeUnsignable, boolean includeDust, boolean overrideFrozen) {
         lock.lock();
         try {
             List<TransactionOutput> candidates;
@@ -4539,8 +4551,19 @@ public class Wallet extends BaseTaggableObject
                         continue;
 
                     if(output.isFrozen()) {
-                        System.out.println("Frozen UTXO...");
-                        continue;
+                        if(overrideFrozen) {
+                            output.setFrozen(false);
+                            output.setUnfreezeTime(0);
+                        } else {
+                            long currentTime = System.currentTimeMillis() / 1000L;
+                            long unfreezeTime = output.getUnfreezeTime();
+                            if(currentTime >= unfreezeTime) {
+                                output.setFrozen(false);
+                                output.setUnfreezeTime(0);
+                            } else {
+                                continue;
+                            }
+                        }
                     }
 
                     if (output.getValue().value != 546L) {
@@ -4558,7 +4581,7 @@ public class Wallet extends BaseTaggableObject
         }
     }
 
-    public List<TransactionOutput> getAllDustUtxos(boolean excludeImmatureCoinbases, boolean excludeUnsignable) {
+    public List<TransactionOutput> getAllDustUtxos(boolean excludeImmatureCoinbases, boolean excludeUnsignable, boolean overrideFrozen) {
         lock.lock();
         try {
             List<TransactionOutput> candidates;
@@ -4570,8 +4593,21 @@ public class Wallet extends BaseTaggableObject
                     if (excludeImmatureCoinbases && !transaction.isMature())
                         continue;
 
-                    if(output.isFrozen())
-                        continue;
+                    if(output.isFrozen()) {
+                        if(overrideFrozen) {
+                            output.setFrozen(false);
+                            output.setUnfreezeTime(0);
+                        } else {
+                            long currentTime = System.currentTimeMillis() / 1000L;
+                            long unfreezeTime = output.getUnfreezeTime();
+                            if(currentTime >= unfreezeTime) {
+                                output.setFrozen(false);
+                                output.setUnfreezeTime(0);
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
 
                     if (output.getValue().value == 546L) {
                         candidates.add(output);
@@ -4587,7 +4623,7 @@ public class Wallet extends BaseTaggableObject
     }
 
     public List<TransactionOutput> calculateAllSpendCandidates(boolean excludeImmatureCoinbases, boolean excludeUnsignable) {
-        return this.calculateAllSpendCandidates(excludeImmatureCoinbases, excludeUnsignable, false);
+        return this.calculateAllSpendCandidates(excludeImmatureCoinbases, excludeUnsignable, false, false);
     }
 
     public List<TransactionOutput> calculateSpendCandidatesForAddress(Address address, boolean excludeImmatureCoinbases, boolean excludeUnsignable) {
@@ -4733,7 +4769,7 @@ public class Wallet extends BaseTaggableObject
     }
 
     public List<TransactionOutput> getUtxos() {
-        return this.calculateAllSpendCandidates(false, true, false);
+        return this.calculateAllSpendCandidates(false, true, false, false);
     }
     //endregion
 

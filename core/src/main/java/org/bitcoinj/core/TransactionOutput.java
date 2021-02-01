@@ -62,6 +62,7 @@ public class TransactionOutput extends ChildMessage {
     private TransactionInput spentBy;
 
     private boolean frozen;
+    private long unfreezeTime;
 
     /**
      * Deserializes a transaction output message. This is usually part of a transaction message.
@@ -284,6 +285,15 @@ public class TransactionOutput extends ChildMessage {
 
     public void setFrozen(boolean frozen) {
         this.frozen = frozen;
+    }
+
+    public long getUnfreezeTime() {
+        return unfreezeTime;
+    }
+
+    public void setUnfreezeTime(long timestamp) {
+        this.frozen = timestamp != 0;
+        this.unfreezeTime = timestamp;
     }
 
     /**

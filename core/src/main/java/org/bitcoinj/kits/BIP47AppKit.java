@@ -756,6 +756,16 @@ public class BIP47AppKit extends WalletKitCore {
             sendRequest.tx.addOutput(Coin.ZERO, ScriptBuilder.createOpReturnScript(op_return));
         }
 
+        for(TransactionOutput utxo : sendRequest.tx.getOutputs()) {
+            if(utxo.isMineOrWatched(wallet())) {
+                long currentTime = System.currentTimeMillis()/1000L;
+                // 1 hour lock time.
+                long unfreezeTime = currentTime + 3600;
+                utxo.setFrozen(true);
+                utxo.setUnfreezeTime(unfreezeTime);
+            }
+        }
+
         vWallet.completeTx(sendRequest);
 
         System.out.println("Completed SendRequest");

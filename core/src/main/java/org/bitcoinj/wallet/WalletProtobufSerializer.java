@@ -268,7 +268,8 @@ public class WalletProtobufSerializer {
             Protos.TransactionOutput.Builder outputBuilder = Protos.TransactionOutput.newBuilder()
                     .setScriptBytes(ByteString.copyFrom(output.getScriptBytes()))
                     .setValue(output.getValue().value)
-                    .setFrozen(output.isFrozen());
+                    .setFrozen(output.isFrozen())
+                    .setUnfreezeTime(output.getUnfreezeTime());
             final TransactionInput spentBy = output.getSpentBy();
             if (spentBy != null) {
                 Sha256Hash spendingHash = spentBy.getParentTransaction().getTxId();
@@ -766,8 +767,11 @@ public class WalletProtobufSerializer {
             }
 
             if(transactionOutput.hasFrozen()) {
-                System.out.println("Has frozen..., frozen: " + transactionOutput.getFrozen());
                 output.setFrozen(transactionOutput.getFrozen());
+            }
+
+            if(transactionOutput.hasUnfreezeTime()) {
+                output.setUnfreezeTime(transactionOutput.getUnfreezeTime());
             }
         }
 

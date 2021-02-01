@@ -183,6 +183,8 @@ message TransactionOutput {
   optional int32 spent_by_transaction_index = 4;
   // Is frozen by wallet, to prevent spending accidentally.
   optional bool frozen = 5;
+  // Time that frozen output will become unfrozen. Optional.
+  optional int64 unfreezeTime = 6;
 }
 
 /**

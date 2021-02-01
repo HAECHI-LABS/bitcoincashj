@@ -294,7 +294,7 @@ public class SlpBIP47AppKit extends BIP47AppKit {
             recalculatingTokens = true;
             this.slpUtxos.clear();
             this.slpBalances.clear();
-            List<TransactionOutput> utxos = this.wallet().getAllDustUtxos(false, false);
+            List<TransactionOutput> utxos = this.wallet().getAllDustUtxos(false, false, false);
             ArrayList<SlpUTXO> slpUtxosToAdd = new ArrayList<>();
 
             for (TransactionOutput utxo : utxos) {
