@@ -30,9 +30,6 @@ public abstract class AbstractPowRulesChecker {
         this.networkParameters = networkParameters;
     }
 
-    public abstract void checkRules(StoredBlock storedPrev, Block nextBlock, BlockStore blockStore,
-                                    AbstractBlockChain blockChain) throws VerificationException, BlockStoreException;
-
     public static boolean hasEqualDifficulty(Block prevBlock, Block nextBlock) {
         return prevBlock.getDifficultyTarget() == nextBlock.getDifficultyTarget();
     }
@@ -40,5 +37,8 @@ public abstract class AbstractPowRulesChecker {
     public static boolean hasEqualDifficulty(long a, BigInteger b) {
         return a == Utils.encodeCompactBits(b);
     }
+
+    public abstract void checkRules(StoredBlock storedPrev, Block nextBlock, BlockStore blockStore,
+                                    AbstractBlockChain blockChain) throws VerificationException, BlockStoreException;
 
 }

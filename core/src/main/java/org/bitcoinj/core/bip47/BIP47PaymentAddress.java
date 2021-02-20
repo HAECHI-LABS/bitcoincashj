@@ -25,7 +25,7 @@ import java.security.spec.InvalidKeySpecException;
 /**
  * <p>A {@link BIP47PaymentAddress} is derived for account deposits in a bip47 channel. It is used by a recipient's bip47 wallet to derive and watch deposits. It
  * is also used by a sender's bip47 wallet to calculate the next addresses to send a deposit to.</p>
- *
+ * <p>
  * The BIP47 BIP47PaymentAddress is at the derivation path <pre>m / 47' / coin_type' / account_id' / idx' .</pre>.
  *
  * <p>Properties:</p>
@@ -35,6 +35,15 @@ import java.security.spec.InvalidKeySpecException;
  * </ul>
  */
 public class BIP47PaymentAddress {
+    // give the values for "a", "b", "G" in the ECDSA curve used in Bitcoin (https://en.bitcoin.it/wiki/Secp256k1)
+    private static final X9ECParameters CURVE_PARAMS = CustomNamedCurves.getByName("secp256k1");
+    // create the curve
+    private static final ECDomainParameters CURVE;
+
+    static {
+        CURVE = new ECDomainParameters(CURVE_PARAMS.getCurve(), CURVE_PARAMS.getG(), CURVE_PARAMS.getN(), CURVE_PARAMS.getH());
+    }
+
     // if we are receiving, this is the sender's payment code
     // if we are sending, this is the receiver's payment code
     private org.bitcoinj.core.bip47.BIP47PaymentCode BIP47PaymentCode = null;
@@ -44,14 +53,6 @@ public class BIP47PaymentAddress {
     private byte[] privKey = null;
     // the network used for formatting
     private NetworkParameters networkParameters;
-    // give the values for "a", "b", "G" in the ECDSA curve used in Bitcoin (https://en.bitcoin.it/wiki/Secp256k1)
-    private static final X9ECParameters CURVE_PARAMS = CustomNamedCurves.getByName("secp256k1");
-    // create the curve
-    private static final ECDomainParameters CURVE;
-
-    static {
-        CURVE = new ECDomainParameters(CURVE_PARAMS.getCurve(), CURVE_PARAMS.getG(), CURVE_PARAMS.getN(), CURVE_PARAMS.getH());
-    }
 
     /**
      * Creates a BIP47PaymentAddress object that the sender will use to pay, using the hardened key at idx

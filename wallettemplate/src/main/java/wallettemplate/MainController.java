@@ -43,14 +43,21 @@ import static wallettemplate.Main.bitcoin;
  * after. This class handles all the updates and event handling for the main UI.
  */
 public class MainController {
+    private static final MonetaryFormat MONETARY_FORMAT = MonetaryFormat.BTC.noCode();
     public HBox controlsBox;
     public Label balance;
     public Button sendMoneyOutBtn;
     public ClickableBitcoinAddress addressControl;
-
     private BitcoinUIModel model = new BitcoinUIModel();
     private NotificationBarPane.Item syncItem;
-    private static final MonetaryFormat MONETARY_FORMAT = MonetaryFormat.BTC.noCode();
+
+    private static String formatCoin(Coin coin) {
+        return MONETARY_FORMAT.format(coin).toString();
+    }
+
+    private static Binding<String> createBalanceStringBinding(ObservableValue<Coin> coinProperty) {
+        return Bindings.createStringBinding(() -> formatCoin(coinProperty.getValue()), coinProperty);
+    }
 
     // Called by FXMLLoader.
     public void initialize() {
@@ -76,14 +83,6 @@ public class MainController {
                 showBitcoinSyncMessage();
             }
         });
-    }
-
-    private static String formatCoin(Coin coin) {
-        return MONETARY_FORMAT.format(coin).toString();
-    }
-
-    private static Binding<String> createBalanceStringBinding(ObservableValue<Coin> coinProperty) {
-        return Bindings.createStringBinding(() -> formatCoin(coinProperty.getValue()), coinProperty);
     }
 
     private void showBitcoinSyncMessage() {

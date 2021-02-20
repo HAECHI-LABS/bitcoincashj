@@ -44,9 +44,25 @@ public class MultiplexingDiscovery implements PeerDiscovery {
 
     protected final List<PeerDiscovery> seeds;
     protected final NetworkParameters netParams;
-    private volatile ExecutorService vThreadPool;
     private final boolean parallelQueries;
     private final boolean shufflePeers;
+    private volatile ExecutorService vThreadPool;
+
+    /**
+     * Will query the given seeds in parallel before producing a merged response.
+     */
+    public MultiplexingDiscovery(NetworkParameters params, List<PeerDiscovery> seeds) {
+        this(params, seeds, true, true);
+    }
+
+    private MultiplexingDiscovery(NetworkParameters params, List<PeerDiscovery> seeds, boolean parallelQueries,
+                                  boolean shufflePeers) {
+        checkArgument(!seeds.isEmpty());
+        this.netParams = params;
+        this.seeds = seeds;
+        this.parallelQueries = parallelQueries;
+        this.shufflePeers = shufflePeers;
+    }
 
     /**
      * Builds a suitable set of peer discoveries. Will query them in parallel before producing a merged response.
@@ -82,22 +98,6 @@ public class MultiplexingDiscovery implements PeerDiscovery {
             for (String dnsSeed : dnsSeeds)
                 discoveries.add(new DnsSeedDiscovery(params, dnsSeed));
         return new MultiplexingDiscovery(params, discoveries, parallelQueries, shufflePeers);
-    }
-
-    /**
-     * Will query the given seeds in parallel before producing a merged response.
-     */
-    public MultiplexingDiscovery(NetworkParameters params, List<PeerDiscovery> seeds) {
-        this(params, seeds, true, true);
-    }
-
-    private MultiplexingDiscovery(NetworkParameters params, List<PeerDiscovery> seeds, boolean parallelQueries,
-                                  boolean shufflePeers) {
-        checkArgument(!seeds.isEmpty());
-        this.netParams = params;
-        this.seeds = seeds;
-        this.parallelQueries = parallelQueries;
-        this.shufflePeers = shufflePeers;
     }
 
     @Override

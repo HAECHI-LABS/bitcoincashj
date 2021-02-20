@@ -44,17 +44,15 @@ import java.util.Objects;
  * <p>Instances of this class are not safe for use by multiple threads.</p>
  */
 public class UTXOsMessage extends Message {
-    private long height;
-    private Sha256Hash chainHead;
-    private byte[] hits;   // little-endian bitset indicating whether an output was found or not.
-
-    private List<TransactionOutput> outputs;
-    private long[] heights;
-
     /**
      * This is a special sentinel value that can appear in the heights field if the given tx is in the mempool.
      */
     public static long MEMPOOL_HEIGHT = 0x7FFFFFFFL;
+    private long height;
+    private Sha256Hash chainHead;
+    private byte[] hits;   // little-endian bitset indicating whether an output was found or not.
+    private List<TransactionOutput> outputs;
+    private long[] heights;
 
     public UTXOsMessage(NetworkParameters params, byte[] payloadBytes) {
         super(params, payloadBytes, 0);

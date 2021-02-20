@@ -46,13 +46,11 @@ import static org.fusesource.leveldbjni.JniDBFactory.factory;
  */
 
 public class LevelDBFullPrunedBlockStore implements FullPrunedBlockStore {
+    // Defaults for cache sizes
+    static final long LEVELDB_READ_CACHE_DEFAULT = 100 * 1048576; // 100 meg
+    static final int LEVELDB_WRITE_CACHE_DEFAULT = 10 * 1048576; // 10 meg
+    static final int OPENOUT_CACHE_DEFAULT = 100000;
     private static final Logger log = LoggerFactory.getLogger(LevelDBFullPrunedBlockStore.class);
-
-    NetworkParameters params;
-
-    // LevelDB reference.
-    DB db = null;
-
     // Standard blockstore properties
     protected Sha256Hash chainHeadHash;
     protected StoredBlock chainHeadBlock;
@@ -62,171 +60,48 @@ public class LevelDBFullPrunedBlockStore implements FullPrunedBlockStore {
     // Indicates if we track and report runtime for each method
     // this is very useful to focus performance tuning on correct areas.
     protected boolean instrument = false;
-    // instrumentation stats
-    Stopwatch totalStopwatch;
     protected long hit;
     protected long miss;
-    Map<String, Stopwatch> methodStartTime;
-    Map<String, Long> methodCalls;
-    Map<String, Long> methodTotalTime;
-    int exitBlock; // Must be multiple of 1000 and causes code to exit at this
-    // block!
-    // ONLY used for performance benchmarking.
-
     // LRU Cache for getTransactionOutput
     protected Map<ByteBuffer, UTXO> utxoCache;
     // Additional cache to cope with case when transactions are rolled back
     // e.g. when block fails to verify.
     protected Map<ByteBuffer, UTXO> utxoUncommittedCache;
     protected Set<ByteBuffer> utxoUncommittedDeletedCache;
-
     // Database folder
     protected String filename;
-
+    // block!
+    // ONLY used for performance benchmarking.
     // Do we auto commit transactions.
     protected boolean autoCommit = true;
-
+    // Sizes of leveldb caches.
+    protected long leveldbReadCache;
+    protected int leveldbWriteCache;
+    // Size of cache for getTransactionOutput
+    protected int openOutCache;
+    // Bloomfilter for caching calls to hasUnspentOutputs
+    protected BloomFilter bloom;
+    NetworkParameters params;
+    // LevelDB reference.
+    DB db = null;
+    // instrumentation stats
+    Stopwatch totalStopwatch;
+    Map<String, Stopwatch> methodStartTime;
+    Map<String, Long> methodCalls;
+    Map<String, Long> methodTotalTime;
+    int exitBlock; // Must be multiple of 1000 and causes code to exit at this
     // Datastructures to allow us to search for uncommited inserts/deletes.
     // leveldb does not support dirty reads so we have to
     // do it ourselves.
     Map<ByteBuffer, byte[]> uncommited;
     Set<ByteBuffer> uncommitedDeletes;
-
-    // Sizes of leveldb caches.
-    protected long leveldbReadCache;
-    protected int leveldbWriteCache;
-
-    // Size of cache for getTransactionOutput
-    protected int openOutCache;
-    // Bloomfilter for caching calls to hasUnspentOutputs
-    protected BloomFilter bloom;
-
-    // Defaults for cache sizes
-    static final long LEVELDB_READ_CACHE_DEFAULT = 100 * 1048576; // 100 meg
-    static final int LEVELDB_WRITE_CACHE_DEFAULT = 10 * 1048576; // 10 meg
-    static final int OPENOUT_CACHE_DEFAULT = 100000;
-
-    // LRUCache
-    public class LRUCache extends LinkedHashMap<ByteBuffer, UTXO> {
-        private static final long serialVersionUID = 1L;
-        private int capacity;
-
-        public LRUCache(int capacity, float loadFactor) {
-            super(capacity, loadFactor, true);
-            this.capacity = capacity;
-        }
-
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<ByteBuffer, UTXO> eldest) {
-            return size() > this.capacity;
-        }
-    }
-
-    // Simple bloomfilter. We take advantage of fact that a Transaction Hash
-    // can be split into 3 30bit numbers that are all random and uncorrelated
-    // so ideal to use as the input to a 3 function bloomfilter. No has function
-    // needed.
-    private class BloomFilter {
-        private byte[] cache;
-        public long returnedTrue;
-        public long returnedFalse;
-        public long added;
-
-        public BloomFilter() {
-            // 2^27 so since 8 bits in a byte this is
-            // 1,073,741,824 bits
-            cache = new byte[134217728];
-            // This size chosen as with 3 functions we should only get 4% errors
-            // with 150m entries.
-        }
-
-        // Called to prime cache.
-        // Might be idea to call periodically to flush out removed keys.
-        // Would need to benchmark 1st though.
-        public void reloadCache(DB db) {
-            // LevelDB is great at scanning consecutive keys.
-            // This take seconds even with 20m keys to add.
-            log.info("Loading Bloom Filter");
-            DBIterator iterator = db.iterator();
-            byte[] key = getKey(KeyType.OPENOUT_ALL);
-            for (iterator.seek(key); iterator.hasNext(); iterator.next()) {
-                ByteBuffer bbKey = ByteBuffer.wrap(iterator.peekNext().getKey());
-                byte firstByte = bbKey.get(); // remove the KeyType.OPENOUT_ALL
-                // byte.
-                if (key[0] != firstByte) {
-                    printStat();
-                    return;
-                }
-
-                byte[] hash = new byte[32];
-                bbKey.get(hash);
-                add(hash);
-            }
-            try {
-                iterator.close();
-            } catch (IOException e) {
-                log.error("Error closing iterator", e);
-            }
-            printStat();
-        }
-
-        public void printStat() {
-            log.info("Bloom Added: " + added + " T: " + returnedTrue + " F: " + returnedFalse);
-        }
-
-        // Add a txhash to the filter.
-        public void add(byte[] hash) {
-            byte[] firstHash = new byte[4];
-            added++;
-            for (int i = 0; i < 3; i++) {
-                System.arraycopy(hash, i * 4, firstHash, 0, 4);
-                setBit(firstHash);
-            }
-        }
-
-        public void add(Sha256Hash hash) {
-            add(hash.getBytes());
-        }
-
-        // check if hash was added.
-        // if returns false then 100% sure never added
-        // if returns true need to check what state is in DB as can
-        // not be 100% sure.
-        public boolean wasAdded(Sha256Hash hash) {
-
-            byte[] firstHash = new byte[4];
-            for (int i = 0; i < 3; i++) {
-                System.arraycopy(hash.getBytes(), i * 4, firstHash, 0, 4);
-                boolean result = getBit(firstHash);
-                if (!result) {
-                    returnedFalse++;
-                    return false;
-                }
-            }
-            returnedTrue++;
-            return true;
-        }
-
-        private void setBit(byte[] entry) {
-            int arrayIndex = (entry[0] & 0x3F) << 21 | (entry[1] & 0xFF) << 13 | (entry[2] & 0xFF) << 5
-                    | (entry[3] & 0xFF) >> 3;
-            int bit = (entry[3] & 0x07);
-            int orBit = (0x1 << bit);
-            byte newEntry = (byte) ((int) cache[arrayIndex] | orBit);
-            cache[arrayIndex] = newEntry;
-        }
-
-        private boolean getBit(byte[] entry) {
-            int arrayIndex = (entry[0] & 0x3F) << 21 | (entry[1] & 0xFF) << 13 | (entry[2] & 0xFF) << 5
-                    | (entry[3] & 0xFF) >> 3;
-            int bit = (entry[3] & 0x07);
-            int orBit = (0x1 << bit);
-            byte arrayEntry = cache[arrayIndex];
-
-            int result = arrayEntry & orBit;
-            return result != 0;
-        }
-    }
+    // Instrumentation of bloom filter to check theory
+    // matches reality. Without this initial chain sync takes
+    // 50-75% longer.
+    long hasCall;
+    long hasTrue;
+    long hasFalse;
+    WriteBatch batch;
 
     public LevelDBFullPrunedBlockStore(NetworkParameters params, String filename, int blockCount) {
         this(params, filename, blockCount, LEVELDB_READ_CACHE_DEFAULT, LEVELDB_WRITE_CACHE_DEFAULT,
@@ -529,14 +404,6 @@ public class LevelDBFullPrunedBlockStore implements FullPrunedBlockStore {
         if (instrument)
             endMethod("put");
         putUpdateStoredBlock(storedBlock, true);
-    }
-
-    // Since LevelDB is a key value store we do not have "tables".
-    // So these keys are the 1st byte of each key to indicate the "table" it is
-    // in.
-    // Do wonder if grouping each "table" like this is efficient or not...
-    enum KeyType {
-        CREATED, CHAIN_HEAD_SETTING, VERIFIED_CHAIN_HEAD_SETTING, VERSION_SETTING, HEADERS_ALL, UNDOABLEBLOCKS_ALL, HEIGHT_UNDOABLEBLOCKS, OPENOUT_ALL, ADDRESS_HASHINDEX
     }
 
     // These helpers just get the key for an input
@@ -881,13 +748,6 @@ public class LevelDBFullPrunedBlockStore implements FullPrunedBlockStore {
             endMethod("removeUnspentTransactionOutput");
     }
 
-    // Instrumentation of bloom filter to check theory
-    // matches reality. Without this initial chain sync takes
-    // 50-75% longer.
-    long hasCall;
-    long hasTrue;
-    long hasFalse;
-
     @Override
     public boolean hasUnspentOutputs(Sha256Hash hash, int numOutputs) throws BlockStoreException {
         if (instrument)
@@ -992,8 +852,6 @@ public class LevelDBFullPrunedBlockStore implements FullPrunedBlockStore {
 
     }
 
-    WriteBatch batch;
-
     @Override
     public void beginDatabaseBatchWrite() throws BlockStoreException {
         // This is often called twice in row! But they are not nested
@@ -1096,5 +954,135 @@ public class LevelDBFullPrunedBlockStore implements FullPrunedBlockStore {
                 c.delete();
         }
         openDB();
+    }
+
+    // Since LevelDB is a key value store we do not have "tables".
+    // So these keys are the 1st byte of each key to indicate the "table" it is
+    // in.
+    // Do wonder if grouping each "table" like this is efficient or not...
+    enum KeyType {
+        CREATED, CHAIN_HEAD_SETTING, VERIFIED_CHAIN_HEAD_SETTING, VERSION_SETTING, HEADERS_ALL, UNDOABLEBLOCKS_ALL, HEIGHT_UNDOABLEBLOCKS, OPENOUT_ALL, ADDRESS_HASHINDEX
+    }
+
+    // LRUCache
+    public class LRUCache extends LinkedHashMap<ByteBuffer, UTXO> {
+        private static final long serialVersionUID = 1L;
+        private int capacity;
+
+        public LRUCache(int capacity, float loadFactor) {
+            super(capacity, loadFactor, true);
+            this.capacity = capacity;
+        }
+
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<ByteBuffer, UTXO> eldest) {
+            return size() > this.capacity;
+        }
+    }
+
+    // Simple bloomfilter. We take advantage of fact that a Transaction Hash
+    // can be split into 3 30bit numbers that are all random and uncorrelated
+    // so ideal to use as the input to a 3 function bloomfilter. No has function
+    // needed.
+    private class BloomFilter {
+        public long returnedTrue;
+        public long returnedFalse;
+        public long added;
+        private byte[] cache;
+
+        public BloomFilter() {
+            // 2^27 so since 8 bits in a byte this is
+            // 1,073,741,824 bits
+            cache = new byte[134217728];
+            // This size chosen as with 3 functions we should only get 4% errors
+            // with 150m entries.
+        }
+
+        // Called to prime cache.
+        // Might be idea to call periodically to flush out removed keys.
+        // Would need to benchmark 1st though.
+        public void reloadCache(DB db) {
+            // LevelDB is great at scanning consecutive keys.
+            // This take seconds even with 20m keys to add.
+            log.info("Loading Bloom Filter");
+            DBIterator iterator = db.iterator();
+            byte[] key = getKey(KeyType.OPENOUT_ALL);
+            for (iterator.seek(key); iterator.hasNext(); iterator.next()) {
+                ByteBuffer bbKey = ByteBuffer.wrap(iterator.peekNext().getKey());
+                byte firstByte = bbKey.get(); // remove the KeyType.OPENOUT_ALL
+                // byte.
+                if (key[0] != firstByte) {
+                    printStat();
+                    return;
+                }
+
+                byte[] hash = new byte[32];
+                bbKey.get(hash);
+                add(hash);
+            }
+            try {
+                iterator.close();
+            } catch (IOException e) {
+                log.error("Error closing iterator", e);
+            }
+            printStat();
+        }
+
+        public void printStat() {
+            log.info("Bloom Added: " + added + " T: " + returnedTrue + " F: " + returnedFalse);
+        }
+
+        // Add a txhash to the filter.
+        public void add(byte[] hash) {
+            byte[] firstHash = new byte[4];
+            added++;
+            for (int i = 0; i < 3; i++) {
+                System.arraycopy(hash, i * 4, firstHash, 0, 4);
+                setBit(firstHash);
+            }
+        }
+
+        public void add(Sha256Hash hash) {
+            add(hash.getBytes());
+        }
+
+        // check if hash was added.
+        // if returns false then 100% sure never added
+        // if returns true need to check what state is in DB as can
+        // not be 100% sure.
+        public boolean wasAdded(Sha256Hash hash) {
+
+            byte[] firstHash = new byte[4];
+            for (int i = 0; i < 3; i++) {
+                System.arraycopy(hash.getBytes(), i * 4, firstHash, 0, 4);
+                boolean result = getBit(firstHash);
+                if (!result) {
+                    returnedFalse++;
+                    return false;
+                }
+            }
+            returnedTrue++;
+            return true;
+        }
+
+        private void setBit(byte[] entry) {
+            int arrayIndex = (entry[0] & 0x3F) << 21 | (entry[1] & 0xFF) << 13 | (entry[2] & 0xFF) << 5
+                    | (entry[3] & 0xFF) >> 3;
+            int bit = (entry[3] & 0x07);
+            int orBit = (0x1 << bit);
+            byte newEntry = (byte) ((int) cache[arrayIndex] | orBit);
+            cache[arrayIndex] = newEntry;
+        }
+
+        private boolean getBit(byte[] entry) {
+            int arrayIndex = (entry[0] & 0x3F) << 21 | (entry[1] & 0xFF) << 13 | (entry[2] & 0xFF) << 5
+                    | (entry[3] & 0xFF) >> 3;
+            int bit = (entry[3] & 0x07);
+            int orBit = (0x1 << bit);
+            byte arrayEntry = cache[arrayIndex];
+
+            int result = arrayEntry & orBit;
+            return result != 0;
+        }
     }
 }

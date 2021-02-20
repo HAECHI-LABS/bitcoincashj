@@ -491,6 +491,25 @@ public abstract class BtcFormat extends Format {
      */
 
     /**
+     * A constant useful for specifying a denomination of bitcoins, the {@code int} value
+     * {@code 0}.
+     */
+    public static final int COIN_SCALE = 0;
+    /**
+     * A constant useful for specifying a denomination of millibitcoins, the {@code int}
+     * value {@code 3}.
+     */
+    public static final int MILLICOIN_SCALE = 3;
+    /**
+     * A constant useful for specifying a denomination of microbitcoins, the {@code int}
+     * value {@code 6}.
+     */
+    public static final int MICROCOIN_SCALE = 6;
+    /**
+     * An alternative currency symbol to use in locales where the default symbol is used for the national currency.
+     */
+    protected static final String COIN_SYMBOL_ALT = "Ƀ";
+    /**
      * The conventional international currency code for bitcoins: "BTC"
      */
     private static final String COIN_CODE = "BTC";
@@ -498,313 +517,16 @@ public abstract class BtcFormat extends Format {
      * The default currency symbols for bitcoins
      */
     private static final String COIN_SYMBOL = "฿";
-    /**
-     * An alternative currency symbol to use in locales where the default symbol is used for the national currency.
-     */
-    protected static final String COIN_SYMBOL_ALT = "Ƀ";
 
+    /* Scale is the number of decimal-places difference from same value in bitcoins */
     protected final DecimalFormat numberFormat; // warning: mutable
     protected final int minimumFractionDigits;
     protected final List<Integer> decimalGroups;
-
-    /* Scale is the number of decimal-places difference from same value in bitcoins */
-    /**
-     * A constant useful for specifying a denomination of bitcoins, the {@code int} value
-     * {@code 0}.
-     */
-    public static final int COIN_SCALE = 0;
-
-    /**
-     * A constant useful for specifying a denomination of millibitcoins, the {@code int}
-     * value {@code 3}.
-     */
-    public static final int MILLICOIN_SCALE = 3;
-
-    /**
-     * A constant useful for specifying a denomination of microbitcoins, the {@code int}
-     * value {@code 6}.
-     */
-    public static final int MICROCOIN_SCALE = 6;
-
-    /**
-     * Return the number of decimal places by which any value denominated in the
-     * units indicated by the given scale differs from that same value denominated in satoshis
-     */
-    private static int offSatoshis(int scale) {
-        return Coin.SMALLEST_UNIT_EXPONENT - scale;
-    }
-
-    private static Locale defaultLocale() {
-        return Locale.getDefault();
-    }
-
-    /**
-     * <p>This class constructs new instances of {@link BtcFormat}, allowing for the
-     * configuration of those instances before they are constructed.  After obtaining a
-     * {@code Builder} object from the {@link BtcFormat#builder()} method, invoke the
-     * necessary setter methods to obtain your desired configuration.  Finally, the {@link
-     * #build()} method returns a new {@code BtcFormat} object that has the specified
-     * configuration.
-     *
-     * <p>All the setter methods override defaults.  Invoking {@code build()} without invoking any
-     * of the setting methods is equivalent to invoking {@link BtcFormat#getInstance()} with no arguments.
-     *
-     * <p>Each setter methods returns the same instance on which it is invoked,
-     * thus these methods can be chained.
-     *
-     * <p>Instances of this class are <strong>not</strong> thread-safe.
-     */
-    public static class Builder {
-
-        private enum Variant {
-            AUTO {
-                @Override
-                BtcFormat newInstance(Builder b) {
-                    return getInstance(b.style, b.locale, b.minimumFractionDigits);
-                }
-            },
-            FIXED,
-            UNSET;
-
-            BtcFormat newInstance(Builder b) {
-                return getInstance(b.scale, b.locale, b.minimumFractionDigits, b.fractionGroups);
-            }
-        }
-
-        // Parameters are initialized to default or unset values
-        private Variant variant = Variant.UNSET;
-        private Locale locale = defaultLocale();
-        private int minimumFractionDigits = 2;
-        private int[] fractionGroups = {};
-        private Style style = BtcAutoFormat.Style.CODE;
-        private int scale = 0;
-        private String symbol = "", code = "", pattern = "", localizedPattern = "";
-
-        private Builder() {
-        }
-
-        /**
-         * Specify the new {@code BtcFormat} is to be automatically-denominating.
-         * The argument determines which of either codes or symbols the new {@code BtcFormat}
-         * will use by default to indicate the denominations it chooses when formatting values.
-         *
-         * <p>Note that the {@code Style} argument specifies the
-         * <em>default</em> style, which is overridden by invoking
-         * either {@link #pattern(String)} or {@link #localizedPattern(String)}.
-         *
-         * @throws IllegalArgumentException if {@link #scale(int)} has
-         *                                  previously been invoked on this instance.
-         */
-        public Builder style(BtcAutoFormat.Style val) {
-            if (variant == Variant.FIXED)
-                throw new IllegalStateException("You cannot invoke both style() and scale()");
-            variant = Variant.AUTO;
-            style = val;
-            return this;
-        }
-
-        /**
-         * Specify the number of decimal places in the fraction part of formatted numbers.
-         * This is equivalent to the {@link #minimumFractionDigits(int)} method, but named
-         * appropriately for the context of generating {@link BtcAutoFormat} instances.
-         *
-         * <p>If neither this method nor {@code minimumFactionDigits()} is invoked, the default value
-         * will be {@code 2}.
-         */
-        public Builder fractionDigits(int val) {
-            return minimumFractionDigits(val);
-        }
-
-        /**
-         * Specify a fixed-denomination of units to use when formatting and parsing values.
-         * The argument specifies the number of decimal places, in increasing
-         * precision, by which each formatted value will differ from that same value
-         * denominated in bitcoins.  For example, a denomination of millibitcoins is specified
-         * with a value of {@code 3}.
-         *
-         * <p>The {@code BtcFormat} class provides appropriately named
-         * {@code int}-type constants for the three common values, {@link BtcFormat#COIN_SCALE},
-         * {@link BtcFormat#MILLICOIN_SCALE} {@link BtcFormat#MICROCOIN_SCALE}.
-         *
-         * <p>If neither this method nor {@link #style(BtcAutoFormat.Style)} is invoked on a
-         * {@link Builder}, then the {@link BtcFormat} will default to a
-         * fixed-denomination of bitcoins, equivalent to invoking this method with an argument
-         * of {@code 0}.
-         */
-        public Builder scale(int val) {
-            if (variant == Variant.AUTO)
-                throw new IllegalStateException("You cannot invoke both scale() and style()");
-            variant = Variant.FIXED;
-            scale = val;
-            return this;
-        }
-
-        /**
-         * Specify the minimum number of decimal places in the fraction part of formatted values.
-         * This method is equivalent to {@link #fractionDigits(int)}, but named appropriately for
-         * the context of generating a fixed-denomination formatter.
-         *
-         * <p>If neither this method nor {@code fractionDigits()} is invoked, the default value
-         * will be {@code 2}.
-         */
-        public Builder minimumFractionDigits(int val) {
-            minimumFractionDigits = val;
-            return this;
-        }
-
-        /**
-         * Specify the sizes of a variable number of optional decimal-place groups in the
-         * fraction part of formatted values.  A group of each specified size will be used in
-         * addition to all previously applied decimal places only if doing so is useful for
-         * expressing precision.  The size of each group is limited to a maximum precision of
-         * satoshis.
-         *
-         * <p>If this method is not invoked, then the number of fractional decimal places will
-         * be limited to the value passed to {@link #minimumFractionDigits}, or {@code 2}
-         * if that method is not invoked.
-         */
-        public Builder fractionGroups(int... val) {
-            fractionGroups = val;
-            return this;
-        }
-
-        /**
-         * Specify the {@link Locale} for formatting and parsing.
-         * If this method is not invoked, then the runtime default locale will be used.
-         */
-        public Builder locale(Locale val) {
-            locale = val;
-            return this;
-        }
-
-        /**
-         * Specify a currency symbol to be used in the denomination-unit indicators
-         * of formatted values.  This method only sets the symbol, but does not cause
-         * it to be used.  You must also invoke either {@code style(SYMBOL)}, or else apply
-         * a custom pattern that includes a single currency-sign character by invoking either
-         * {@link #pattern(String)} or {@link #localizedPattern(String)}.
-         *
-         * <p>Specify only the base symbol.  The appropriate prefix will be applied according
-         * to the denomination of formatted and parsed values.
-         */
-        public Builder symbol(String val) {
-            symbol = val;
-            return this;
-        }
-
-        /**
-         * Specify a custom currency code to be used in the denomination-unit indicators
-         * of formatted values.  This method only sets the code, but does not cause
-         * it to be used.  You must also invoke either {@code style(CODE)}, or else apply
-         * a custom pattern that includes a double currency-sign character by invoking either
-         * {@link #pattern(String)} or {@link #localizedPattern(String)}.
-         *
-         * <p>Specify only the base code.  The appropriate prefix will be applied according
-         * to the denomination of formatted and parsed values.
-         */
-        public Builder code(String val) {
-            code = val;
-            return this;
-        }
-
-        /**
-         * Use the given pattern when formatting and parsing.  The format of this pattern is
-         * identical to that used by the {@link DecimalFormat} class.
-         *
-         * <p>If the pattern lacks a negative subpattern, then the formatter will indicate
-         * negative values by placing a minus sign immediately preceding the number part of
-         * formatted values.
-         *
-         * <p>Note that while the pattern format specified by the {@link
-         * java.text.DecimalFormat} class includes a mechanism for setting the number of
-         * fractional decimal places, that part of the pattern is ignored.  Instead, use the
-         * {@link #fractionDigits(int)}, {@link #minimumFractionDigits(int)} and {@link
-         * #fractionGroups(int...)} methods.
-         *
-         * <p>Warning: if you set a pattern that includes a currency-sign for a
-         * fixed-denomination formatter that uses a non-standard scale, then an exception will
-         * be raised when you try to format a value.  The standard scales include all for
-         * which a metric prefix exists from micro to mega.
-         *
-         * <p>Note that by applying a pattern you override the configured formatting style of
-         * {@link BtcAutoFormat} instances.
-         */
-        public Builder pattern(String val) {
-            if (localizedPattern != "")
-                throw new IllegalStateException("You cannot invoke both pattern() and localizedPattern()");
-            pattern = val;
-            return this;
-        }
-
-        /**
-         * Use the given localized-pattern for formatting and parsing.  The format of this
-         * pattern is identical to the patterns used by the {@link DecimalFormat}
-         * class.
-         *
-         * <p>The pattern is localized according to the locale of the {@code BtcFormat}
-         * instance, the symbols for which can be examined by inspecting the {@link
-         * java.text.DecimalFormatSymbols} object returned by {@link BtcFormat#symbols()}.
-         * So, for example, if you are in Germany, then the non-localized pattern of
-         * <pre>"#,##0.###"</pre> would be localized as <pre>"#.##0,###"</pre>
-         *
-         * <p>If the pattern lacks a negative subpattern, then the formatter will indicate
-         * negative values by placing a minus sign immediately preceding the number part of
-         * formatted values.
-         *
-         * <p>Note that while the pattern format specified by the {@link
-         * java.text.DecimalFormat} class includes a mechanism for setting the number of
-         * fractional decimal places, that part of the pattern is ignored.  Instead, use the
-         * {@link #fractionDigits(int)}, {@link #minimumFractionDigits(int)} and {@link
-         * #fractionGroups(int...)} methods.
-         *
-         * <p>Warning: if you set a pattern that includes a currency-sign for a
-         * fixed-denomination formatter that uses a non-standard scale, then an exception will
-         * be raised when you try to format a value.  The standard scales include all for
-         * which a metric prefix exists from micro to mega.
-         *
-         * <p>Note that by applying a pattern you override the configured formatting style of
-         * {@link BtcAutoFormat} instances.
-         */
-        public Builder localizedPattern(String val) {
-            if (pattern != "")
-                throw new IllegalStateException("You cannot invoke both pattern() and localizedPattern().");
-            localizedPattern = val;
-            return this;
-        }
-
-        /**
-         * Return a new {@link BtcFormat} instance.  The object returned will be configured according
-         * to the state of this {@code Builder} instance at the time this method is invoked.
-         */
-        public BtcFormat build() {
-            BtcFormat f = variant.newInstance(this);
-            if (symbol != "" || code != "") {
-                synchronized (f.numberFormat) {
-                    DecimalFormatSymbols defaultSigns = f.numberFormat.getDecimalFormatSymbols();
-                    setSymbolAndCode(f.numberFormat,
-                            symbol != "" ? symbol : defaultSigns.getCurrencySymbol(),
-                            code != "" ? code : defaultSigns.getInternationalCurrencySymbol()
-                    );
-                }
-            }
-            if (localizedPattern != "" || pattern != "") {
-                int places = f.numberFormat.getMinimumFractionDigits();
-                if (localizedPattern != "") f.numberFormat.applyLocalizedPattern(negify(localizedPattern));
-                else f.numberFormat.applyPattern(negify(pattern));
-                f.numberFormat.setMinimumFractionDigits(places);
-                f.numberFormat.setMaximumFractionDigits(places);
-            }
-            return f;
-        }
-
-    }
-
-    /**
-     * Return a new {@link Builder} object.  See the documentation of that class for usage details.
-     */
-    public static Builder builder() {
-        return new Builder();
-    }
+    /* Lazy initialization;  No reason to create all these objects unless needed for parsing */
+    // coin indicator regex String; TODO: does this need to be volatile?
+    private volatile String ci = "(" + COIN_SYMBOL + "|" + COIN_SYMBOL_ALT + "|B⃦|" + COIN_CODE + "|XBT)";
+    private Pattern coinPattern;
+    private volatile ScaleMatcher[] denoms;
 
     /**
      * This single constructor is invoked by the overriding subclass constructors.
@@ -827,6 +549,25 @@ public abstract class BtcFormat extends Format {
                     COIN_CODE
             );
         }
+    }
+
+    /**
+     * Return the number of decimal places by which any value denominated in the
+     * units indicated by the given scale differs from that same value denominated in satoshis
+     */
+    private static int offSatoshis(int scale) {
+        return Coin.SMALLEST_UNIT_EXPONENT - scale;
+    }
+
+    private static Locale defaultLocale() {
+        return Locale.getDefault();
+    }
+
+    /**
+     * Return a new {@link Builder} object.  See the documentation of that class for usage details.
+     */
+    public static Builder builder() {
+        return new Builder();
     }
 
     /**
@@ -1168,6 +909,8 @@ public abstract class BtcFormat extends Format {
         return getInstance(scale, locale, 2);
     }
 
+    // ****** FORMATTING *****
+
     /**
      * Return a new fixed-denomination formatter for the given locale, with the specified
      * fractional decimal placing.  The first argument specifies the denomination as the size
@@ -1195,7 +938,215 @@ public abstract class BtcFormat extends Format {
         return new BtcFixedFormat(locale, scale, minDecimals, groups);
     }
 
-    // ****** FORMATTING *****
+    /**
+     * Sets the number of fractional decimal places to be displayed on the given
+     * NumberFormat object to the value of the given integer.
+     *
+     * @return The minimum and maximum fractional places settings that the
+     * formatter had before this change, as an ImmutableList.
+     */
+    private static ImmutableList<Integer> setFormatterDigits(DecimalFormat formatter, int min, int max) {
+        ImmutableList<Integer> ante = ImmutableList.of(
+                formatter.getMinimumFractionDigits(),
+                formatter.getMaximumFractionDigits()
+        );
+        formatter.setMinimumFractionDigits(min);
+        formatter.setMaximumFractionDigits(max);
+        return ante;
+    }
+
+    /**
+     * Return the number of fractional decimal places to be displayed when formatting
+     * the given number of monetary units of the denomination indicated by the given decimal scale value,
+     * where 0 = coin, 3 = millicoin, and so on.
+     *
+     * @param unitCount      the number of monetary units to be formatted
+     * @param scale          the denomination of those units as the decimal-place shift from coins
+     * @param minDecimals    the minimum number of fractional decimal places
+     * @param fractionGroups the sizes of option fractional decimal-place groups
+     */
+    private static int calculateFractionPlaces(
+            BigDecimal unitCount, int scale, int minDecimals, List<Integer> fractionGroups) {
+        /* Taking into account BOTH the user's preference for decimal-place groups, AND the prohibition
+         * against displaying a fractional number of satoshis, determine the maximum possible number of
+         * fractional decimal places. */
+        int places = minDecimals;
+        for (int group : fractionGroups) {
+            places += group;
+        }
+        int max = Math.min(places, offSatoshis(scale));
+
+        places = Math.min(minDecimals, max);
+        for (int group : fractionGroups) {
+            /* Compare the value formatted using only this many decimal places to the
+             * same value using as many places as possible.  If there's no difference, then
+             * there's no reason to continue adding more places.  */
+            if (unitCount.setScale(places, HALF_UP).compareTo(unitCount.setScale(max, HALF_UP)) == 0) break;
+            places += group;
+            if (places > max) places = max;
+        }
+        return places;
+    }
+
+    /**
+     * Takes an object representing a bitcoin quantity of any type the
+     * client is permitted to pass us, and return a BigInteger representing the
+     * number of satoshis having the equivalent value.
+     */
+    private static BigInteger inSatoshis(Object qty) {
+        BigInteger satoshis;
+        // the value might be bitcoins or satoshis
+        if (qty instanceof Long || qty instanceof Integer)
+            satoshis = BigInteger.valueOf(((Number) qty).longValue());
+        else if (qty instanceof BigInteger)
+            satoshis = (BigInteger) qty;
+        else if (qty instanceof BigDecimal)
+            satoshis = ((BigDecimal) qty).movePointRight(Coin.SMALLEST_UNIT_EXPONENT).
+                    setScale(0, BigDecimal.ROUND_HALF_UP).unscaledValue();
+        else if (qty instanceof Coin)
+            satoshis = BigInteger.valueOf(((Coin) qty).value);
+        else
+            throw new IllegalArgumentException("Cannot format a " + qty.getClass().getSimpleName() +
+                    " as a Bicoin value");
+        return satoshis;
+    }
+
+    /**
+     * Set both the currency symbol and international code of the underlying {@link
+     * java.text.NumberFormat} object to the value of the given {@link String}.
+     * This method is invoked in the process of parsing, not formatting.
+     * <p>
+     * Only invoke this from code synchronized on the value of the first argument, and don't
+     * forget to put the symbols back otherwise equals(), hashCode() and immutability will
+     * break.
+     */
+    private static DecimalFormatSymbols setSymbolAndCode(DecimalFormat numberFormat, String sign) {
+        return setSymbolAndCode(numberFormat, sign, sign);
+    }
+
+    /**
+     * Set the currency symbol and international code of the underlying {@link
+     * java.text.NumberFormat} object to the values of the last two arguments, respectively.
+     * This method is invoked in the process of parsing, not formatting.
+     * <p>
+     * Only invoke this from code synchronized on value of the first argument, and don't
+     * forget to put the symbols back otherwise equals(), hashCode() and immutability will
+     * break.
+     */
+    private static DecimalFormatSymbols setSymbolAndCode(DecimalFormat numberFormat, String symbol, String code) {
+        checkState(Thread.holdsLock(numberFormat));
+        DecimalFormatSymbols fs = numberFormat.getDecimalFormatSymbols();
+        DecimalFormatSymbols ante = (DecimalFormatSymbols) fs.clone();
+        fs.setInternationalCurrencySymbol(code);
+        fs.setCurrencySymbol(symbol);
+        numberFormat.setDecimalFormatSymbols(fs);
+        return ante;
+    }
+
+    /**
+     * Set both the currency symbol and code of the underlying, mutable NumberFormat object
+     * according to the given denominational units scale factor.  This is for formatting, not parsing.
+     *
+     * <p>Set back to zero when you're done formatting otherwise immutability, equals() and
+     * hashCode() will break!
+     *
+     * @param scale Number of places the decimal point will be shifted when formatting
+     *              a quantity of satoshis.
+     */
+    protected static void prefixUnitsIndicator(DecimalFormat numberFormat, int scale) {
+        checkState(Thread.holdsLock(numberFormat)); // make sure caller intends to reset before changing
+        DecimalFormatSymbols fs = numberFormat.getDecimalFormatSymbols();
+        setSymbolAndCode(numberFormat,
+                prefixSymbol(fs.getCurrencySymbol(), scale), prefixCode(fs.getInternationalCurrencySymbol(), scale)
+        );
+    }
+
+    /****** END OF PARSING STUFF *****/
+
+    protected static String prefixCode(String code, int scale) {
+        switch (scale) {
+            case COIN_SCALE:
+                return code;
+            case 1:
+                return "d" + code;
+            case 2:
+                return "c" + code;
+            case MILLICOIN_SCALE:
+                return "m" + code;
+            case MICROCOIN_SCALE:
+                return "µ" + code;
+            case -1:
+                return "da" + code;
+            case -2:
+                return "h" + code;
+            case -3:
+                return "k" + code;
+            case -6:
+                return "M" + code;
+            default:
+                throw new IllegalStateException("No known prefix for scale " + scale);
+        }
+    }
+
+    protected static String prefixSymbol(String symbol, int scale) {
+        switch (scale) {
+            case COIN_SCALE:
+                return symbol;
+            case 1:
+                return "d" + symbol;
+            case 2:
+                return "¢" + symbol;
+            case MILLICOIN_SCALE:
+                return "₥" + symbol;
+            case MICROCOIN_SCALE:
+                return "µ" + symbol;
+            case -1:
+                return "da" + symbol;
+            case -2:
+                return "h" + symbol;
+            case -3:
+                return "k" + symbol;
+            case -6:
+                return "M" + symbol;
+            default:
+                throw new IllegalStateException("No known prefix for scale " + scale);
+        }
+    }
+
+    /**
+     * Guarantee a formatting pattern has a subpattern for negative values.  This method takes
+     * a pattern that may be missing a negative subpattern, and returns the same pattern with
+     * a negative subpattern appended as needed.
+     *
+     * <p>This method accommodates an imperfection in the Java formatting code and distributed
+     * locale data.  To wit: the subpattern for negative numbers is optional and not all
+     * locales have one. In those cases, {@link DecimalFormat} will indicate numbers
+     * less than zero by adding a negative sign as the first character of the prefix of the
+     * positive subpattern.
+     *
+     * <p>We don't like this, since we claim the negative sign applies to the number not the
+     * units, and therefore it ought to be adjacent to the number, displacing the
+     * currency-units indicator if necessary.
+     */
+    protected static String negify(String pattern) {
+        if (pattern.contains(";")) return pattern;
+        else {
+            if (pattern.contains("-"))
+                throw new IllegalStateException("Positive pattern contains negative sign");
+            // the regex matches everything until the first non-quoted number character
+            return pattern + ";" + pattern.replaceFirst("^([^#0,.']*('[^']*')?)*", "$0-");
+        }
+    }
+
+    // ****** PARSING *****
+
+    /**
+     * Return an array of all locales for which the getInstance() method of this class can
+     * return localized instances.  See {@link NumberFormat#getAvailableLocales()}
+     */
+    public static Locale[] getAvailableLocales() {
+        return NumberFormat.getAvailableLocales();
+    }
 
     /**
      * Formats a bitcoin monetary value and returns an {@link AttributedCharacterIterator}.
@@ -1319,81 +1270,6 @@ public abstract class BtcFormat extends Format {
     }
 
     /**
-     * Sets the number of fractional decimal places to be displayed on the given
-     * NumberFormat object to the value of the given integer.
-     *
-     * @return The minimum and maximum fractional places settings that the
-     * formatter had before this change, as an ImmutableList.
-     */
-    private static ImmutableList<Integer> setFormatterDigits(DecimalFormat formatter, int min, int max) {
-        ImmutableList<Integer> ante = ImmutableList.of(
-                formatter.getMinimumFractionDigits(),
-                formatter.getMaximumFractionDigits()
-        );
-        formatter.setMinimumFractionDigits(min);
-        formatter.setMaximumFractionDigits(max);
-        return ante;
-    }
-
-    /**
-     * Return the number of fractional decimal places to be displayed when formatting
-     * the given number of monetary units of the denomination indicated by the given decimal scale value,
-     * where 0 = coin, 3 = millicoin, and so on.
-     *
-     * @param unitCount      the number of monetary units to be formatted
-     * @param scale          the denomination of those units as the decimal-place shift from coins
-     * @param minDecimals    the minimum number of fractional decimal places
-     * @param fractionGroups the sizes of option fractional decimal-place groups
-     */
-    private static int calculateFractionPlaces(
-            BigDecimal unitCount, int scale, int minDecimals, List<Integer> fractionGroups) {
-        /* Taking into account BOTH the user's preference for decimal-place groups, AND the prohibition
-         * against displaying a fractional number of satoshis, determine the maximum possible number of
-         * fractional decimal places. */
-        int places = minDecimals;
-        for (int group : fractionGroups) {
-            places += group;
-        }
-        int max = Math.min(places, offSatoshis(scale));
-
-        places = Math.min(minDecimals, max);
-        for (int group : fractionGroups) {
-            /* Compare the value formatted using only this many decimal places to the
-             * same value using as many places as possible.  If there's no difference, then
-             * there's no reason to continue adding more places.  */
-            if (unitCount.setScale(places, HALF_UP).compareTo(unitCount.setScale(max, HALF_UP)) == 0) break;
-            places += group;
-            if (places > max) places = max;
-        }
-        return places;
-    }
-
-    /**
-     * Takes an object representing a bitcoin quantity of any type the
-     * client is permitted to pass us, and return a BigInteger representing the
-     * number of satoshis having the equivalent value.
-     */
-    private static BigInteger inSatoshis(Object qty) {
-        BigInteger satoshis;
-        // the value might be bitcoins or satoshis
-        if (qty instanceof Long || qty instanceof Integer)
-            satoshis = BigInteger.valueOf(((Number) qty).longValue());
-        else if (qty instanceof BigInteger)
-            satoshis = (BigInteger) qty;
-        else if (qty instanceof BigDecimal)
-            satoshis = ((BigDecimal) qty).movePointRight(Coin.SMALLEST_UNIT_EXPONENT).
-                    setScale(0, BigDecimal.ROUND_HALF_UP).unscaledValue();
-        else if (qty instanceof Coin)
-            satoshis = BigInteger.valueOf(((Coin) qty).value);
-        else
-            throw new IllegalArgumentException("Cannot format a " + qty.getClass().getSimpleName() +
-                    " as a Bicoin value");
-        return satoshis;
-    }
-
-    // ****** PARSING *****
-
-    /**
      * Parse a {@link String} representation of a Bitcoin monetary value.  Returns a
      * {@link Coin} object that represents the parsed value.
      *
@@ -1403,22 +1279,6 @@ public abstract class BtcFormat extends Format {
     public final Object parseObject(String source, ParsePosition pos) {
         return parse(source, pos);
     }
-
-    private class ScaleMatcher {
-        public Pattern pattern;
-        public int scale;
-
-        ScaleMatcher(Pattern p, int s) {
-            pattern = p;
-            scale = s;
-        }
-    }
-
-    /* Lazy initialization;  No reason to create all these objects unless needed for parsing */
-    // coin indicator regex String; TODO: does this need to be volatile?
-    private volatile String ci = "(" + COIN_SYMBOL + "|" + COIN_SYMBOL_ALT + "|B⃦|" + COIN_CODE + "|XBT)";
-    private Pattern coinPattern;
-    private volatile ScaleMatcher[] denoms;
 
     ScaleMatcher[] denomMatchers() {
         ScaleMatcher[] result = denoms;
@@ -1444,56 +1304,6 @@ public abstract class BtcFormat extends Format {
             }
         }
         return result;
-    }
-
-    /**
-     * Set both the currency symbol and international code of the underlying {@link
-     * java.text.NumberFormat} object to the value of the given {@link String}.
-     * This method is invoked in the process of parsing, not formatting.
-     * <p>
-     * Only invoke this from code synchronized on the value of the first argument, and don't
-     * forget to put the symbols back otherwise equals(), hashCode() and immutability will
-     * break.
-     */
-    private static DecimalFormatSymbols setSymbolAndCode(DecimalFormat numberFormat, String sign) {
-        return setSymbolAndCode(numberFormat, sign, sign);
-    }
-
-    /**
-     * Set the currency symbol and international code of the underlying {@link
-     * java.text.NumberFormat} object to the values of the last two arguments, respectively.
-     * This method is invoked in the process of parsing, not formatting.
-     * <p>
-     * Only invoke this from code synchronized on value of the first argument, and don't
-     * forget to put the symbols back otherwise equals(), hashCode() and immutability will
-     * break.
-     */
-    private static DecimalFormatSymbols setSymbolAndCode(DecimalFormat numberFormat, String symbol, String code) {
-        checkState(Thread.holdsLock(numberFormat));
-        DecimalFormatSymbols fs = numberFormat.getDecimalFormatSymbols();
-        DecimalFormatSymbols ante = (DecimalFormatSymbols) fs.clone();
-        fs.setInternationalCurrencySymbol(code);
-        fs.setCurrencySymbol(symbol);
-        numberFormat.setDecimalFormatSymbols(fs);
-        return ante;
-    }
-
-    /**
-     * Set both the currency symbol and code of the underlying, mutable NumberFormat object
-     * according to the given denominational units scale factor.  This is for formatting, not parsing.
-     *
-     * <p>Set back to zero when you're done formatting otherwise immutability, equals() and
-     * hashCode() will break!
-     *
-     * @param scale Number of places the decimal point will be shifted when formatting
-     *              a quantity of satoshis.
-     */
-    protected static void prefixUnitsIndicator(DecimalFormat numberFormat, int scale) {
-        checkState(Thread.holdsLock(numberFormat)); // make sure caller intends to reset before changing
-        DecimalFormatSymbols fs = numberFormat.getDecimalFormatSymbols();
-        setSymbolAndCode(numberFormat,
-                prefixSymbol(fs.getCurrencySymbol(), scale), prefixCode(fs.getInternationalCurrencySymbol(), scale)
-        );
     }
 
     /**
@@ -1570,91 +1380,6 @@ public abstract class BtcFormat extends Format {
      */
     public Coin parse(String source) throws ParseException {
         return (Coin) parseObject(source);
-    }
-
-    /****** END OF PARSING STUFF *****/
-
-    protected static String prefixCode(String code, int scale) {
-        switch (scale) {
-            case COIN_SCALE:
-                return code;
-            case 1:
-                return "d" + code;
-            case 2:
-                return "c" + code;
-            case MILLICOIN_SCALE:
-                return "m" + code;
-            case MICROCOIN_SCALE:
-                return "µ" + code;
-            case -1:
-                return "da" + code;
-            case -2:
-                return "h" + code;
-            case -3:
-                return "k" + code;
-            case -6:
-                return "M" + code;
-            default:
-                throw new IllegalStateException("No known prefix for scale " + scale);
-        }
-    }
-
-    protected static String prefixSymbol(String symbol, int scale) {
-        switch (scale) {
-            case COIN_SCALE:
-                return symbol;
-            case 1:
-                return "d" + symbol;
-            case 2:
-                return "¢" + symbol;
-            case MILLICOIN_SCALE:
-                return "₥" + symbol;
-            case MICROCOIN_SCALE:
-                return "µ" + symbol;
-            case -1:
-                return "da" + symbol;
-            case -2:
-                return "h" + symbol;
-            case -3:
-                return "k" + symbol;
-            case -6:
-                return "M" + symbol;
-            default:
-                throw new IllegalStateException("No known prefix for scale " + scale);
-        }
-    }
-
-    /**
-     * Guarantee a formatting pattern has a subpattern for negative values.  This method takes
-     * a pattern that may be missing a negative subpattern, and returns the same pattern with
-     * a negative subpattern appended as needed.
-     *
-     * <p>This method accommodates an imperfection in the Java formatting code and distributed
-     * locale data.  To wit: the subpattern for negative numbers is optional and not all
-     * locales have one. In those cases, {@link DecimalFormat} will indicate numbers
-     * less than zero by adding a negative sign as the first character of the prefix of the
-     * positive subpattern.
-     *
-     * <p>We don't like this, since we claim the negative sign applies to the number not the
-     * units, and therefore it ought to be adjacent to the number, displacing the
-     * currency-units indicator if necessary.
-     */
-    protected static String negify(String pattern) {
-        if (pattern.contains(";")) return pattern;
-        else {
-            if (pattern.contains("-"))
-                throw new IllegalStateException("Positive pattern contains negative sign");
-            // the regex matches everything until the first non-quoted number character
-            return pattern + ";" + pattern.replaceFirst("^([^#0,.']*('[^']*')?)*", "$0-");
-        }
-    }
-
-    /**
-     * Return an array of all locales for which the getInstance() method of this class can
-     * return localized instances.  See {@link NumberFormat#getAvailableLocales()}
-     */
-    public static Locale[] getAvailableLocales() {
-        return NumberFormat.getAvailableLocales();
     }
 
     /**
@@ -1743,6 +1468,276 @@ public abstract class BtcFormat extends Format {
     @Override
     public int hashCode() {
         return Objects.hash(pattern(), symbols(), minimumFractionDigits, decimalGroups);
+    }
+
+    /**
+     * <p>This class constructs new instances of {@link BtcFormat}, allowing for the
+     * configuration of those instances before they are constructed.  After obtaining a
+     * {@code Builder} object from the {@link BtcFormat#builder()} method, invoke the
+     * necessary setter methods to obtain your desired configuration.  Finally, the {@link
+     * #build()} method returns a new {@code BtcFormat} object that has the specified
+     * configuration.
+     *
+     * <p>All the setter methods override defaults.  Invoking {@code build()} without invoking any
+     * of the setting methods is equivalent to invoking {@link BtcFormat#getInstance()} with no arguments.
+     *
+     * <p>Each setter methods returns the same instance on which it is invoked,
+     * thus these methods can be chained.
+     *
+     * <p>Instances of this class are <strong>not</strong> thread-safe.
+     */
+    public static class Builder {
+
+        // Parameters are initialized to default or unset values
+        private Variant variant = Variant.UNSET;
+        private Locale locale = defaultLocale();
+        private int minimumFractionDigits = 2;
+        private int[] fractionGroups = {};
+        private Style style = BtcAutoFormat.Style.CODE;
+        private int scale = 0;
+        private String symbol = "", code = "", pattern = "", localizedPattern = "";
+        private Builder() {
+        }
+
+        /**
+         * Specify the new {@code BtcFormat} is to be automatically-denominating.
+         * The argument determines which of either codes or symbols the new {@code BtcFormat}
+         * will use by default to indicate the denominations it chooses when formatting values.
+         *
+         * <p>Note that the {@code Style} argument specifies the
+         * <em>default</em> style, which is overridden by invoking
+         * either {@link #pattern(String)} or {@link #localizedPattern(String)}.
+         *
+         * @throws IllegalArgumentException if {@link #scale(int)} has
+         *                                  previously been invoked on this instance.
+         */
+        public Builder style(BtcAutoFormat.Style val) {
+            if (variant == Variant.FIXED)
+                throw new IllegalStateException("You cannot invoke both style() and scale()");
+            variant = Variant.AUTO;
+            style = val;
+            return this;
+        }
+
+        /**
+         * Specify the number of decimal places in the fraction part of formatted numbers.
+         * This is equivalent to the {@link #minimumFractionDigits(int)} method, but named
+         * appropriately for the context of generating {@link BtcAutoFormat} instances.
+         *
+         * <p>If neither this method nor {@code minimumFactionDigits()} is invoked, the default value
+         * will be {@code 2}.
+         */
+        public Builder fractionDigits(int val) {
+            return minimumFractionDigits(val);
+        }
+
+        /**
+         * Specify a fixed-denomination of units to use when formatting and parsing values.
+         * The argument specifies the number of decimal places, in increasing
+         * precision, by which each formatted value will differ from that same value
+         * denominated in bitcoins.  For example, a denomination of millibitcoins is specified
+         * with a value of {@code 3}.
+         *
+         * <p>The {@code BtcFormat} class provides appropriately named
+         * {@code int}-type constants for the three common values, {@link BtcFormat#COIN_SCALE},
+         * {@link BtcFormat#MILLICOIN_SCALE} {@link BtcFormat#MICROCOIN_SCALE}.
+         *
+         * <p>If neither this method nor {@link #style(BtcAutoFormat.Style)} is invoked on a
+         * {@link Builder}, then the {@link BtcFormat} will default to a
+         * fixed-denomination of bitcoins, equivalent to invoking this method with an argument
+         * of {@code 0}.
+         */
+        public Builder scale(int val) {
+            if (variant == Variant.AUTO)
+                throw new IllegalStateException("You cannot invoke both scale() and style()");
+            variant = Variant.FIXED;
+            scale = val;
+            return this;
+        }
+
+        /**
+         * Specify the minimum number of decimal places in the fraction part of formatted values.
+         * This method is equivalent to {@link #fractionDigits(int)}, but named appropriately for
+         * the context of generating a fixed-denomination formatter.
+         *
+         * <p>If neither this method nor {@code fractionDigits()} is invoked, the default value
+         * will be {@code 2}.
+         */
+        public Builder minimumFractionDigits(int val) {
+            minimumFractionDigits = val;
+            return this;
+        }
+
+        /**
+         * Specify the sizes of a variable number of optional decimal-place groups in the
+         * fraction part of formatted values.  A group of each specified size will be used in
+         * addition to all previously applied decimal places only if doing so is useful for
+         * expressing precision.  The size of each group is limited to a maximum precision of
+         * satoshis.
+         *
+         * <p>If this method is not invoked, then the number of fractional decimal places will
+         * be limited to the value passed to {@link #minimumFractionDigits}, or {@code 2}
+         * if that method is not invoked.
+         */
+        public Builder fractionGroups(int... val) {
+            fractionGroups = val;
+            return this;
+        }
+
+        /**
+         * Specify the {@link Locale} for formatting and parsing.
+         * If this method is not invoked, then the runtime default locale will be used.
+         */
+        public Builder locale(Locale val) {
+            locale = val;
+            return this;
+        }
+
+        /**
+         * Specify a currency symbol to be used in the denomination-unit indicators
+         * of formatted values.  This method only sets the symbol, but does not cause
+         * it to be used.  You must also invoke either {@code style(SYMBOL)}, or else apply
+         * a custom pattern that includes a single currency-sign character by invoking either
+         * {@link #pattern(String)} or {@link #localizedPattern(String)}.
+         *
+         * <p>Specify only the base symbol.  The appropriate prefix will be applied according
+         * to the denomination of formatted and parsed values.
+         */
+        public Builder symbol(String val) {
+            symbol = val;
+            return this;
+        }
+
+        /**
+         * Specify a custom currency code to be used in the denomination-unit indicators
+         * of formatted values.  This method only sets the code, but does not cause
+         * it to be used.  You must also invoke either {@code style(CODE)}, or else apply
+         * a custom pattern that includes a double currency-sign character by invoking either
+         * {@link #pattern(String)} or {@link #localizedPattern(String)}.
+         *
+         * <p>Specify only the base code.  The appropriate prefix will be applied according
+         * to the denomination of formatted and parsed values.
+         */
+        public Builder code(String val) {
+            code = val;
+            return this;
+        }
+
+        /**
+         * Use the given pattern when formatting and parsing.  The format of this pattern is
+         * identical to that used by the {@link DecimalFormat} class.
+         *
+         * <p>If the pattern lacks a negative subpattern, then the formatter will indicate
+         * negative values by placing a minus sign immediately preceding the number part of
+         * formatted values.
+         *
+         * <p>Note that while the pattern format specified by the {@link
+         * java.text.DecimalFormat} class includes a mechanism for setting the number of
+         * fractional decimal places, that part of the pattern is ignored.  Instead, use the
+         * {@link #fractionDigits(int)}, {@link #minimumFractionDigits(int)} and {@link
+         * #fractionGroups(int...)} methods.
+         *
+         * <p>Warning: if you set a pattern that includes a currency-sign for a
+         * fixed-denomination formatter that uses a non-standard scale, then an exception will
+         * be raised when you try to format a value.  The standard scales include all for
+         * which a metric prefix exists from micro to mega.
+         *
+         * <p>Note that by applying a pattern you override the configured formatting style of
+         * {@link BtcAutoFormat} instances.
+         */
+        public Builder pattern(String val) {
+            if (localizedPattern != "")
+                throw new IllegalStateException("You cannot invoke both pattern() and localizedPattern()");
+            pattern = val;
+            return this;
+        }
+
+        /**
+         * Use the given localized-pattern for formatting and parsing.  The format of this
+         * pattern is identical to the patterns used by the {@link DecimalFormat}
+         * class.
+         *
+         * <p>The pattern is localized according to the locale of the {@code BtcFormat}
+         * instance, the symbols for which can be examined by inspecting the {@link
+         * java.text.DecimalFormatSymbols} object returned by {@link BtcFormat#symbols()}.
+         * So, for example, if you are in Germany, then the non-localized pattern of
+         * <pre>"#,##0.###"</pre> would be localized as <pre>"#.##0,###"</pre>
+         *
+         * <p>If the pattern lacks a negative subpattern, then the formatter will indicate
+         * negative values by placing a minus sign immediately preceding the number part of
+         * formatted values.
+         *
+         * <p>Note that while the pattern format specified by the {@link
+         * java.text.DecimalFormat} class includes a mechanism for setting the number of
+         * fractional decimal places, that part of the pattern is ignored.  Instead, use the
+         * {@link #fractionDigits(int)}, {@link #minimumFractionDigits(int)} and {@link
+         * #fractionGroups(int...)} methods.
+         *
+         * <p>Warning: if you set a pattern that includes a currency-sign for a
+         * fixed-denomination formatter that uses a non-standard scale, then an exception will
+         * be raised when you try to format a value.  The standard scales include all for
+         * which a metric prefix exists from micro to mega.
+         *
+         * <p>Note that by applying a pattern you override the configured formatting style of
+         * {@link BtcAutoFormat} instances.
+         */
+        public Builder localizedPattern(String val) {
+            if (pattern != "")
+                throw new IllegalStateException("You cannot invoke both pattern() and localizedPattern().");
+            localizedPattern = val;
+            return this;
+        }
+
+        /**
+         * Return a new {@link BtcFormat} instance.  The object returned will be configured according
+         * to the state of this {@code Builder} instance at the time this method is invoked.
+         */
+        public BtcFormat build() {
+            BtcFormat f = variant.newInstance(this);
+            if (symbol != "" || code != "") {
+                synchronized (f.numberFormat) {
+                    DecimalFormatSymbols defaultSigns = f.numberFormat.getDecimalFormatSymbols();
+                    setSymbolAndCode(f.numberFormat,
+                            symbol != "" ? symbol : defaultSigns.getCurrencySymbol(),
+                            code != "" ? code : defaultSigns.getInternationalCurrencySymbol()
+                    );
+                }
+            }
+            if (localizedPattern != "" || pattern != "") {
+                int places = f.numberFormat.getMinimumFractionDigits();
+                if (localizedPattern != "") f.numberFormat.applyLocalizedPattern(negify(localizedPattern));
+                else f.numberFormat.applyPattern(negify(pattern));
+                f.numberFormat.setMinimumFractionDigits(places);
+                f.numberFormat.setMaximumFractionDigits(places);
+            }
+            return f;
+        }
+
+        private enum Variant {
+            AUTO {
+                @Override
+                BtcFormat newInstance(Builder b) {
+                    return getInstance(b.style, b.locale, b.minimumFractionDigits);
+                }
+            },
+            FIXED,
+            UNSET;
+
+            BtcFormat newInstance(Builder b) {
+                return getInstance(b.scale, b.locale, b.minimumFractionDigits, b.fractionGroups);
+            }
+        }
+
+    }
+
+    private class ScaleMatcher {
+        public Pattern pattern;
+        public int scale;
+
+        ScaleMatcher(Pattern p, int s) {
+            pattern = p;
+            scale = s;
+        }
     }
 
 }

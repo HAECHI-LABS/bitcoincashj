@@ -8,15 +8,19 @@ import org.bouncycastle.util.encoders.Hex;
 
 public class MemoOpReturnOutput {
     private final ScriptBuilder builder;
-    public Script getScript() {
-        return this.getBuilder().build();
-    }
-    public ScriptBuilder getBuilder() { return this.builder; }
 
     private MemoOpReturnOutput(String actionId) {
         this.builder = new ScriptBuilder()
                 .op(ScriptOpCodes.OP_RETURN)
                 .data(Hex.decode(actionId));
+    }
+
+    public Script getScript() {
+        return this.getBuilder().build();
+    }
+
+    public ScriptBuilder getBuilder() {
+        return this.builder;
     }
 
     public static class Follow extends MemoOpReturnOutput {

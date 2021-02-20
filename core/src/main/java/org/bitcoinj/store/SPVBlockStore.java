@@ -45,18 +45,34 @@ import static com.google.common.base.Preconditions.*;
  * but as they are virtually unheard of this is not a significant risk.
  */
 public class SPVBlockStore implements BlockStore {
-    private static final Logger log = LoggerFactory.getLogger(SPVBlockStore.class);
-    protected final ReentrantLock lock = Threading.lock(SPVBlockStore.class);
-
     /**
      * The default number of headers that will be stored in the ring buffer.
      */
     public static final int DEFAULT_CAPACITY = 10000;
     public static final String HEADER_MAGIC = "SPVB";
-
-    protected volatile MappedByteBuffer buffer;
+    protected static final int RECORD_SIZE = 32 /* hash */ + StoredBlock.COMPACT_SERIALIZED_SIZE;
+    // File format:
+    //   4 header bytes = "SPVB"
+    //   4 cursor bytes, which indicate the offset from the first kb where the next block header should be written.
+    //   32 bytes for the hash of the chain head
+    //
+    // For each header (128 bytes)
+    //   32 bytes hash of the header
+    //   12 bytes of chain work
+    //    4 bytes of height
+    //   80 bytes of block header data
+    protected static final int FILE_PROLOGUE_BYTES = 1024;
+    private static final Logger log = LoggerFactory.getLogger(SPVBlockStore.class);
+    // Use a separate cache to track get() misses. This is to efficiently handle the case of an unconnected block
+    // during chain download. Each new block will do a get() on the unconnected block so if we haven't seen it yet we
+    // must efficiently respond.
+    //
+    // We don't care about the value in this cache. It is always notFoundMarker. Unfortunately LinkedHashSet does not
+    // provide the removeEldestEntry control.
+    private static final Object NOT_FOUND_MARKER = new Object();
+    protected final ReentrantLock lock = Threading.lock(SPVBlockStore.class);
     protected final NetworkParameters params;
-
+    protected volatile MappedByteBuffer buffer;
     // The entire ring-buffer is mmapped and accessing it should be as fast as accessing regular memory once it's
     // faulted in. Unfortunately, in theory practice and theory are the same. In practice they aren't.
     //
@@ -70,13 +86,6 @@ public class SPVBlockStore implements BlockStore {
             return size() > 2050;  // Slightly more than the difficulty transition period.
         }
     };
-    // Use a separate cache to track get() misses. This is to efficiently handle the case of an unconnected block
-    // during chain download. Each new block will do a get() on the unconnected block so if we haven't seen it yet we
-    // must efficiently respond.
-    //
-    // We don't care about the value in this cache. It is always notFoundMarker. Unfortunately LinkedHashSet does not
-    // provide the removeEldestEntry control.
-    private static final Object NOT_FOUND_MARKER = new Object();
     protected LinkedHashMap<Sha256Hash, Object> notFoundCache = new LinkedHashMap<Sha256Hash, Object>() {
         @Override
         protected boolean removeEldestEntry(Map.Entry<Sha256Hash, Object> entry) {
@@ -86,6 +95,7 @@ public class SPVBlockStore implements BlockStore {
     // Used to stop other applications/processes from opening the store.
     protected FileLock fileLock = null;
     protected RandomAccessFile randomAccessFile = null;
+    protected StoredBlock lastChainHead = null;
     private int fileLength;
 
     /**
@@ -168,6 +178,13 @@ public class SPVBlockStore implements BlockStore {
         }
     }
 
+    /**
+     * Returns the size in bytes of the file that is used to store the chain with the current parameters.
+     */
+    public static final int getFileSize(int capacity) {
+        return RECORD_SIZE * capacity + FILE_PROLOGUE_BYTES /* extra kilobyte for stuff */;
+    }
+
     private void initNewStore(NetworkParameters params) throws Exception {
         byte[] header;
         header = HEADER_MAGIC.getBytes(StandardCharsets.US_ASCII);
@@ -183,13 +200,6 @@ public class SPVBlockStore implements BlockStore {
         StoredBlock storedGenesis = new StoredBlock(genesis, genesis.getWork(), 0);
         put(storedGenesis);
         setChainHead(storedGenesis);
-    }
-
-    /**
-     * Returns the size in bytes of the file that is used to store the chain with the current parameters.
-     */
-    public static final int getFileSize(int capacity) {
-        return RECORD_SIZE * capacity + FILE_PROLOGUE_BYTES /* extra kilobyte for stuff */;
     }
 
     @Override
@@ -262,8 +272,6 @@ public class SPVBlockStore implements BlockStore {
         }
     }
 
-    protected StoredBlock lastChainHead = null;
-
     @Override
     public StoredBlock getChainHead() throws BlockStoreException {
         final MappedByteBuffer buffer = this.buffer;
@@ -320,20 +328,6 @@ public class SPVBlockStore implements BlockStore {
     public NetworkParameters getParams() {
         return params;
     }
-
-    protected static final int RECORD_SIZE = 32 /* hash */ + StoredBlock.COMPACT_SERIALIZED_SIZE;
-
-    // File format:
-    //   4 header bytes = "SPVB"
-    //   4 cursor bytes, which indicate the offset from the first kb where the next block header should be written.
-    //   32 bytes for the hash of the chain head
-    //
-    // For each header (128 bytes)
-    //   32 bytes hash of the header
-    //   12 bytes of chain work
-    //    4 bytes of height
-    //   80 bytes of block header data
-    protected static final int FILE_PROLOGUE_BYTES = 1024;
 
     /**
      * Returns the offset from the file start where the latest block should be written (end of prev block).

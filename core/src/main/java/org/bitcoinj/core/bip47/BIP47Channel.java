@@ -31,7 +31,7 @@ public class BIP47Channel {
     private static final int STATUS_SENT_CFM = 1;
 
     private static final int LOOKAHEAD = 20;
-
+    private static final Logger log = LoggerFactory.getLogger(BIP47Channel.class);
     private String paymentCode = null;
     private String notificationAddress = null;
     private List<BIP47Address> incomingAddresses = new ArrayList<BIP47Address>();
@@ -39,8 +39,6 @@ public class BIP47Channel {
     private int currentOutgoingIndex = 0;
     private int currentIncomingIndex = -1;
     private Sha256Hash ntxHash;
-
-    private static final Logger log = LoggerFactory.getLogger(BIP47Channel.class);
 
     public BIP47Channel() {
     }
@@ -63,16 +61,16 @@ public class BIP47Channel {
         return paymentCode;
     }
 
+    public void setPaymentCode(String pc) {
+        paymentCode = pc;
+    }
+
     public String getNotificationAddress() {
         return notificationAddress;
     }
 
     public void setNotificationAddress(String na) {
         notificationAddress = na;
-    }
-
-    public void setPaymentCode(String pc) {
-        paymentCode = pc;
     }
 
     public List<BIP47Address> getIncomingAddresses() {

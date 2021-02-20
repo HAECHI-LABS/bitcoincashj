@@ -55,14 +55,13 @@ public class DeterministicKey extends ECKey {
     };
 
     private final DeterministicKey parent;
-    private HDPath childNumberPath;
     private final int depth;
-    private int parentFingerprint; // 0 if this key is root node of key hierarchy
-
     /**
      * 32 bytes
      */
     private final byte[] chainCode;
+    private HDPath childNumberPath;
+    private int parentFingerprint; // 0 if this key is root node of key hierarchy
 
     /**
      * Constructs a key from its components. This is not normally something you should use.
@@ -121,22 +120,6 @@ public class DeterministicKey extends ECKey {
     }
 
     /**
-     * Return the fingerprint of this key's parent as an int value, or zero if this key is the
-     * root node of the key hierarchy.  Raise an exception if the arguments are inconsistent.
-     * This method exists to avoid code repetition in the constructors.
-     */
-    private int ascertainParentFingerprint(DeterministicKey parentKey, int parentFingerprint)
-            throws IllegalArgumentException {
-        if (parentFingerprint != 0) {
-            if (parent != null)
-                checkArgument(parent.getFingerprint() == parentFingerprint,
-                        "parent fingerprint mismatch",
-                        Integer.toHexString(parent.getFingerprint()), Integer.toHexString(parentFingerprint));
-            return parentFingerprint;
-        } else return 0;
-    }
-
-    /**
      * Constructs a key from its components, including its public key data and possibly-redundant
      * information about its parent key.  Invoked when deserializing, but otherwise not something that
      * you normally should use.
@@ -176,7 +159,6 @@ public class DeterministicKey extends ECKey {
         this.parentFingerprint = ascertainParentFingerprint(parent, parentFingerprint);
     }
 
-
     /**
      * Clones the key
      */
@@ -188,6 +170,105 @@ public class DeterministicKey extends ECKey {
         this.encryptedPrivateKey = keyToClone.encryptedPrivateKey;
         this.depth = this.childNumberPath.size();
         this.parentFingerprint = this.parent.getFingerprint();
+    }
+
+    static byte[] addChecksum(byte[] input) {
+        int inputLength = input.length;
+        byte[] checksummed = new byte[inputLength + 4];
+        System.arraycopy(input, 0, checksummed, 0, inputLength);
+        byte[] checksum = Sha256Hash.hashTwice(input);
+        System.arraycopy(checksum, 0, checksummed, inputLength, 4);
+        return checksummed;
+    }
+
+    static String toBase58(byte[] ser) {
+        return Base58.encode(addChecksum(ser));
+    }
+
+    /**
+     * Deserialize a base-58-encoded HD Key with no parent
+     */
+    public static DeterministicKey deserializeB58(String base58, NetworkParameters params) {
+        return deserializeB58(null, base58, params);
+    }
+
+    /**
+     * Deserialize a base-58-encoded HD Key.
+     *
+     * @param parent The parent node in the given key's deterministic hierarchy.
+     * @throws IllegalArgumentException if the base58 encoded key could not be parsed.
+     */
+    public static DeterministicKey deserializeB58(@Nullable DeterministicKey parent, String base58, NetworkParameters params) {
+        return deserialize(params, Base58.decodeChecked(base58), parent);
+    }
+
+    /**
+     * Deserialize an HD Key with no parent
+     */
+    public static DeterministicKey deserialize(NetworkParameters params, byte[] serializedKey) {
+        return deserialize(params, serializedKey, null);
+    }
+
+    /**
+     * Deserialize an HD Key.
+     *
+     * @param parent The parent node in the given key's deterministic hierarchy.
+     */
+    public static DeterministicKey deserialize(NetworkParameters params, byte[] serializedKey, @Nullable DeterministicKey parent) {
+        ByteBuffer buffer = ByteBuffer.wrap(serializedKey);
+        int header = buffer.getInt();
+        final boolean pub = header == params.getBip32HeaderP2PKHpub();
+        final boolean priv = header == params.getBip32HeaderP2PKHpriv();
+        if (!(pub || priv))
+            throw new IllegalArgumentException("Unknown header bytes: " + toBase58(serializedKey).substring(0, 4));
+        int depth = buffer.get() & 0xFF; // convert signed byte to positive int since depth cannot be negative
+        final int parentFingerprint = buffer.getInt();
+        final int i = buffer.getInt();
+        final ChildNumber childNumber = new ChildNumber(i);
+        HDPath path;
+        if (parent != null) {
+            if (parentFingerprint == 0)
+                throw new IllegalArgumentException("Parent was provided but this key doesn't have one");
+            if (parent.getFingerprint() != parentFingerprint)
+                throw new IllegalArgumentException("Parent fingerprints don't match");
+            path = parent.getPath().extend(childNumber);
+            if (path.size() != depth)
+                throw new IllegalArgumentException("Depth does not match");
+        } else {
+            if (depth >= 1)
+                // We have been given a key that is not a root key, yet we lack the object representing the parent.
+                // This can happen when deserializing an account key for a watching wallet.  In this case, we assume that
+                // the client wants to conceal the key's position in the hierarchy.  The path is truncated at the
+                // parent's node.
+                path = HDPath.M(childNumber);
+            else path = HDPath.M();
+        }
+        byte[] chainCode = new byte[32];
+        buffer.get(chainCode);
+        byte[] data = new byte[33];
+        buffer.get(data);
+        checkArgument(!buffer.hasRemaining(), "Found unexpected data in key");
+        if (pub) {
+            return new DeterministicKey(path, chainCode, new LazyECPoint(ECKey.CURVE.getCurve(), data), parent, depth, parentFingerprint);
+        } else {
+            return new DeterministicKey(path, chainCode, new BigInteger(1, data), parent, depth, parentFingerprint);
+        }
+    }
+
+    /**
+     * Return the fingerprint of this key's parent as an int value, or zero if this key is the
+     * root node of the key hierarchy.  Raise an exception if the arguments are inconsistent.
+     * This method exists to avoid code repetition in the constructors.
+     */
+    private int ascertainParentFingerprint(DeterministicKey parentKey, int parentFingerprint)
+            throws IllegalArgumentException {
+        if (parentFingerprint != 0) {
+            if (parent != null)
+                checkArgument(parent.getFingerprint() == parentFingerprint,
+                        "parent fingerprint mismatch",
+                        Integer.toHexString(parent.getFingerprint()), Integer.toHexString(parentFingerprint));
+            return parentFingerprint;
+        } else return 0;
     }
 
     /**
@@ -300,15 +381,6 @@ public class DeterministicKey extends ECKey {
         DeterministicKey key = new DeterministicKey(getPath(), getChainCode(), pub, priv, null);
         key.parentFingerprint = parentFingerprint;
         return key;
-    }
-
-    static byte[] addChecksum(byte[] input) {
-        int inputLength = input.length;
-        byte[] checksummed = new byte[inputLength + 4];
-        System.arraycopy(input, 0, checksummed, 0, inputLength);
-        byte[] checksum = Sha256Hash.hashTwice(input);
-        System.arraycopy(checksum, 0, checksummed, inputLength, 4);
-        return checksummed;
     }
 
     @Override
@@ -532,80 +604,6 @@ public class DeterministicKey extends ECKey {
 
     public String serializePrivB58(NetworkParameters params) {
         return serializePrivB58(params, Script.ScriptType.P2PKH);
-    }
-
-    static String toBase58(byte[] ser) {
-        return Base58.encode(addChecksum(ser));
-    }
-
-    /**
-     * Deserialize a base-58-encoded HD Key with no parent
-     */
-    public static DeterministicKey deserializeB58(String base58, NetworkParameters params) {
-        return deserializeB58(null, base58, params);
-    }
-
-    /**
-     * Deserialize a base-58-encoded HD Key.
-     *
-     * @param parent The parent node in the given key's deterministic hierarchy.
-     * @throws IllegalArgumentException if the base58 encoded key could not be parsed.
-     */
-    public static DeterministicKey deserializeB58(@Nullable DeterministicKey parent, String base58, NetworkParameters params) {
-        return deserialize(params, Base58.decodeChecked(base58), parent);
-    }
-
-    /**
-     * Deserialize an HD Key with no parent
-     */
-    public static DeterministicKey deserialize(NetworkParameters params, byte[] serializedKey) {
-        return deserialize(params, serializedKey, null);
-    }
-
-    /**
-     * Deserialize an HD Key.
-     *
-     * @param parent The parent node in the given key's deterministic hierarchy.
-     */
-    public static DeterministicKey deserialize(NetworkParameters params, byte[] serializedKey, @Nullable DeterministicKey parent) {
-        ByteBuffer buffer = ByteBuffer.wrap(serializedKey);
-        int header = buffer.getInt();
-        final boolean pub = header == params.getBip32HeaderP2PKHpub();
-        final boolean priv = header == params.getBip32HeaderP2PKHpriv();
-        if (!(pub || priv))
-            throw new IllegalArgumentException("Unknown header bytes: " + toBase58(serializedKey).substring(0, 4));
-        int depth = buffer.get() & 0xFF; // convert signed byte to positive int since depth cannot be negative
-        final int parentFingerprint = buffer.getInt();
-        final int i = buffer.getInt();
-        final ChildNumber childNumber = new ChildNumber(i);
-        HDPath path;
-        if (parent != null) {
-            if (parentFingerprint == 0)
-                throw new IllegalArgumentException("Parent was provided but this key doesn't have one");
-            if (parent.getFingerprint() != parentFingerprint)
-                throw new IllegalArgumentException("Parent fingerprints don't match");
-            path = parent.getPath().extend(childNumber);
-            if (path.size() != depth)
-                throw new IllegalArgumentException("Depth does not match");
-        } else {
-            if (depth >= 1)
-                // We have been given a key that is not a root key, yet we lack the object representing the parent.
-                // This can happen when deserializing an account key for a watching wallet.  In this case, we assume that
-                // the client wants to conceal the key's position in the hierarchy.  The path is truncated at the
-                // parent's node.
-                path = HDPath.M(childNumber);
-            else path = HDPath.M();
-        }
-        byte[] chainCode = new byte[32];
-        buffer.get(chainCode);
-        byte[] data = new byte[33];
-        buffer.get(data);
-        checkArgument(!buffer.hasRemaining(), "Found unexpected data in key");
-        if (pub) {
-            return new DeterministicKey(path, chainCode, new LazyECPoint(ECKey.CURVE.getCurve(), data), parent, depth, parentFingerprint);
-        } else {
-            return new DeterministicKey(path, chainCode, new BigInteger(1, data), parent, depth, parentFingerprint);
-        }
     }
 
     /**

@@ -38,15 +38,6 @@ import java.util.concurrent.CompletableFuture;
 import static wallettemplate.utils.GuiUtils.*;
 
 public class WalletSetPasswordController {
-    private static final Logger log = LoggerFactory.getLogger(WalletSetPasswordController.class);
-    public PasswordField pass1, pass2;
-
-    public ProgressIndicator progressMeter;
-    public GridPane widgetGrid;
-    public Button closeButton;
-    public Label explanationLabel;
-
-    public Main.OverlayUI overlayUI;
     // These params were determined empirically on a top-range (as of 2014) MacBook Pro with native scrypt support,
     // using the scryptenc command line tool from the original scrypt distribution, given a memory limit of 40mb.
     public static final Protos.ScryptParameters SCRYPT_PARAMETERS = Protos.ScryptParameters.newBuilder()
@@ -55,12 +46,14 @@ public class WalletSetPasswordController {
             .setN(32768)
             .setSalt(ByteString.copyFrom(KeyCrypterScrypt.randomSalt()))
             .build();
-
-    public void initialize() {
-        progressMeter.setOpacity(0);
-    }
-
+    private static final Logger log = LoggerFactory.getLogger(WalletSetPasswordController.class);
     public static Duration estimatedKeyDerivationTime = null;
+    public PasswordField pass1, pass2;
+    public ProgressIndicator progressMeter;
+    public GridPane widgetGrid;
+    public Button closeButton;
+    public Label explanationLabel;
+    public Main.OverlayUI overlayUI;
 
     public static CompletableFuture<Duration> estimateKeyDerivationTimeMsec() {
         // This is run in the background after startup. If we haven't recorded it before, do a key derivation to see
@@ -80,6 +73,10 @@ public class WalletSetPasswordController {
             });
         }).start();
         return future;
+    }
+
+    public void initialize() {
+        progressMeter.setOpacity(0);
     }
 
     @FXML

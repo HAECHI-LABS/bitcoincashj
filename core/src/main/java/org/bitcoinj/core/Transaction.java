@@ -93,14 +93,11 @@ public class Transaction extends ChildMessage {
             return heightComparison != 0 ? heightComparison : tx1.getTxId().compareTo(tx2.getTxId());
         }
     };
-    private static final Logger log = LoggerFactory.getLogger(Transaction.class);
-
     /**
      * When this bit is set in protocolVersion, do not include witness. The actual value is the same as in Bitcoin Core
      * for consistency.
      */
     public static final int SERIALIZE_TRANSACTION_NO_WITNESS = 0x40000000;
-
     /**
      * Threshold for lockTime: below this value it is interpreted as block number, otherwise as timestamp.
      **/
@@ -109,49 +106,43 @@ public class Transaction extends ChildMessage {
      * Same but as a BigInteger for CHECKLOCKTIMEVERIFY
      */
     public static final BigInteger LOCKTIME_THRESHOLD_BIG = BigInteger.valueOf(LOCKTIME_THRESHOLD);
-
     /**
      * How many bytes a transaction can be before it won't be relayed anymore. Currently 100kb.
      */
     public static final int MAX_STANDARD_TX_SIZE = 100000;
-
     /**
      * If feePerKb is lower than this, Bitcoin Core will treat it as if there were no fee.
      */
     public static final Coin REFERENCE_DEFAULT_MIN_TX_FEE = Coin.valueOf(1000); // 0.01 mBTC
-
     /**
      * If using this feePerKb, transactions will get confirmed within the next couple of blocks.
      * This should be adjusted from time to time. Last adjustment: February 2017.
      */
     public static final Coin DEFAULT_TX_FEE = Coin.valueOf(1000); // 1 mBTC
-
     public static final int CURRENT_VERSION = 2;
     public static final int MAX_STANDARD_VERSION = 2;
     public static final int FORKID_VERSION = 2;
-
     public static final Coin MIN_NONDUST_OUTPUT = Coin.valueOf(546); // satoshis
-
+    /**
+     * @deprecated Instead use SigHash.ANYONECANPAY.value or SigHash.ANYONECANPAY.byteValue() as appropriate.
+     */
+    public static final byte SIGHASH_ANYONECANPAY_VALUE = (byte) 0x80;
+    private static final Logger log = LoggerFactory.getLogger(Transaction.class);
     // These are bitcoin serialized.
     private long version;
     private ArrayList<TransactionInput> inputs;
     private ArrayList<TransactionOutput> outputs;
-
     private long lockTime;
-
     // This is either the time the transaction was broadcast as measured from the local clock, or the time from the
     // block in which it was included. Note that this can be changed by re-orgs so the wallet may update this field.
     // Old serialized transactions don't have this field, thus null is valid. It is used for returning an ordered
     // list of transactions from a wallet, which is helpful for presenting to users.
     private Date updatedAt;
-
     // These are in memory helpers only. They contain the transaction hashes without and with witness.
     private Sha256Hash cachedTxId;
-
     // Data about how confirmed this tx is. Serialized, may be null.
     @Nullable
     private TransactionConfidence confidence;
-
     // Records a map of which blocks the transaction has appeared in (keys) to an index within that block (values).
     // The "index" is not a real index, instead the values are only meaningful relative to each other. For example,
     // consider two transactions that appear in the same block, t1 and t2, where t2 spends an output of t1. Both
@@ -160,52 +151,12 @@ public class Transaction extends ChildMessage {
     //
     // If this transaction is not stored in the wallet, appearsInHashes is null.
     private Map<Sha256Hash, Integer> appearsInHashes;
-
     // Transactions can be encoded in a way that will use more bytes than is optimal
     // (due to VarInts having multiple encodings)
     // MAX_BLOCK_SIZE must be compared to the optimal encoding, not the actual encoding, so when parsing, we keep track
     // of the size of the ideal encoding in addition to the actual message size (which Message needs) so that Blocks
     // can properly keep track of optimal encoded size
     private int optimalEncodingMessageSize;
-
-    /**
-     * This enum describes the underlying reason the transaction was created. It's useful for rendering wallet GUIs
-     * more appropriately.
-     */
-    public enum Purpose {
-        /**
-         * Used when the purpose of a transaction is genuinely unknown.
-         */
-        UNKNOWN,
-        /**
-         * Transaction created to satisfy a user payment request.
-         */
-        USER_PAYMENT,
-        /**
-         * Transaction automatically created and broadcast in order to reallocate money from old to new keys.
-         */
-        KEY_ROTATION,
-        /**
-         * Transaction that uses up pledges to an assurance contract
-         */
-        ASSURANCE_CONTRACT_CLAIM,
-        /**
-         * Transaction that makes a pledge to an assurance contract.
-         */
-        ASSURANCE_CONTRACT_PLEDGE,
-        /**
-         * Send-to-self transaction that exists just to create an output of the right size we can pledge.
-         */
-        ASSURANCE_CONTRACT_STUB,
-        /**
-         * Raise fee, e.g. child-pays-for-parent.
-         */
-        RAISE_FEE,
-        // In future: de/refragmentation, privacy boosting/mixing, etc.
-        // When adding a value, it also needs to be added to wallet.proto, WalletProtobufSerialize.makeTxProto()
-        // and WalletProtobufSerializer.readTransaction()!
-    }
-
     private Purpose purpose = Purpose.UNKNOWN;
 
     /**
@@ -220,6 +171,10 @@ public class Transaction extends ChildMessage {
      */
     @Nullable
     private String memo;
+    @Nullable
+    private Coin cachedValue;
+    @Nullable
+    private TransactionBag cachedForBag;
 
     public Transaction(NetworkParameters params) {
         super(params);
@@ -274,6 +229,42 @@ public class Transaction extends ChildMessage {
     public Transaction(NetworkParameters params, byte[] payload, @Nullable Message parent, MessageSerializer setSerializer, int length)
             throws ProtocolException {
         super(params, payload, 0, parent, setSerializer, length);
+    }
+
+    protected static int calcLength(byte[] buf, int offset) {
+        VarInt varint;
+        // jump past version (uint32)
+        int cursor = offset + 4;
+
+        int i;
+        long scriptLen;
+
+        varint = new VarInt(buf, cursor);
+        long txInCount = varint.value;
+        cursor += varint.getOriginalSizeInBytes();
+
+        for (i = 0; i < txInCount; i++) {
+            // 36 = length of previous_outpoint
+            cursor += 36;
+            varint = new VarInt(buf, cursor);
+            scriptLen = varint.value;
+            // 4 = length of sequence field (unint32)
+            cursor += scriptLen + 4 + varint.getOriginalSizeInBytes();
+        }
+
+        varint = new VarInt(buf, cursor);
+        long txOutCount = varint.value;
+        cursor += varint.getOriginalSizeInBytes();
+
+        for (i = 0; i < txOutCount; i++) {
+            // 8 = length of tx value field (uint64)
+            cursor += 8;
+            varint = new VarInt(buf, cursor);
+            scriptLen = varint.value;
+            cursor += scriptLen + varint.getOriginalSizeInBytes();
+        }
+        // 4 = length of lock_time field (uint32)
+        return cursor - offset + 4;
     }
 
     /**
@@ -433,11 +424,6 @@ public class Transaction extends ChildMessage {
         return totalOut;
     }
 
-    @Nullable
-    private Coin cachedValue;
-    @Nullable
-    private TransactionBag cachedForBag;
-
     /**
      * Returns the difference of {@link Transaction#getValueSentToMe(TransactionBag)} and {@link Transaction#getValueSentFromMe(TransactionBag)}.
      */
@@ -514,83 +500,10 @@ public class Transaction extends ChildMessage {
         this.updatedAt = updatedAt;
     }
 
-    /**
-     * These constants are a part of a scriptSig signature on the inputs. They define the details of how a
-     * transaction can be redeemed, specifically, they control how the hash of the transaction is calculated.
-     */
-    public enum SigHash {
-        ALL(1),
-        NONE(2),
-        FORKID(0x40),
-        SINGLE(3),
-        ANYONECANPAY(0x80), // Caution: Using this type in isolation is non-standard. Treated similar to ANYONECANPAY_ALL.
-        ANYONECANPAY_ALL(0x81),
-        ANYONECANPAY_NONE(0x82),
-        ANYONECANPAY_SINGLE(0x83),
-        UNSET(0); // Caution: Using this type in isolation is non-standard. Treated similar to ALL.
-
-        public final int value;
-
-        /**
-         * @param value
-         */
-        SigHash(final int value) {
-            this.value = value;
-        }
-
-        /**
-         * @return the value as a byte
-         */
-        public byte byteValue() {
-            return (byte) this.value;
-        }
-    }
-
-    /**
-     * @deprecated Instead use SigHash.ANYONECANPAY.value or SigHash.ANYONECANPAY.byteValue() as appropriate.
-     */
-    public static final byte SIGHASH_ANYONECANPAY_VALUE = (byte) 0x80;
-
     @Override
     protected void unCache() {
         super.unCache();
         cachedTxId = null;
-    }
-
-    protected static int calcLength(byte[] buf, int offset) {
-        VarInt varint;
-        // jump past version (uint32)
-        int cursor = offset + 4;
-
-        int i;
-        long scriptLen;
-
-        varint = new VarInt(buf, cursor);
-        long txInCount = varint.value;
-        cursor += varint.getOriginalSizeInBytes();
-
-        for (i = 0; i < txInCount; i++) {
-            // 36 = length of previous_outpoint
-            cursor += 36;
-            varint = new VarInt(buf, cursor);
-            scriptLen = varint.value;
-            // 4 = length of sequence field (unint32)
-            cursor += scriptLen + 4 + varint.getOriginalSizeInBytes();
-        }
-
-        varint = new VarInt(buf, cursor);
-        long txOutCount = varint.value;
-        cursor += varint.getOriginalSizeInBytes();
-
-        for (i = 0; i < txOutCount; i++) {
-            // 8 = length of tx value field (uint64)
-            cursor += 8;
-            varint = new VarInt(buf, cursor);
-            scriptLen = varint.value;
-            cursor += scriptLen + varint.getOriginalSizeInBytes();
-        }
-        // 4 = length of lock_time field (uint32)
-        return cursor - offset + 4;
     }
 
     /**
@@ -817,6 +730,7 @@ public class Transaction extends ChildMessage {
 
     /**
      * Serializes the transaction into the Bitcoin network format and encodes it as hex string.
+     *
      * @return raw transaction in hex format
      */
     public String toHexString() {
@@ -1024,7 +938,6 @@ public class Transaction extends ChildMessage {
     public TransactionOutput addOutput(Coin value, Script script) {
         return addOutput(new TransactionOutput(params, this, value, script.getProgram()));
     }
-
 
     /**
      * Calculates a signature that is valid for being inserted into the input at the given position. This is simply
@@ -1809,5 +1722,75 @@ public class Transaction extends ChildMessage {
      */
     public void setMemo(String memo) {
         this.memo = memo;
+    }
+
+    /**
+     * This enum describes the underlying reason the transaction was created. It's useful for rendering wallet GUIs
+     * more appropriately.
+     */
+    public enum Purpose {
+        /**
+         * Used when the purpose of a transaction is genuinely unknown.
+         */
+        UNKNOWN,
+        /**
+         * Transaction created to satisfy a user payment request.
+         */
+        USER_PAYMENT,
+        /**
+         * Transaction automatically created and broadcast in order to reallocate money from old to new keys.
+         */
+        KEY_ROTATION,
+        /**
+         * Transaction that uses up pledges to an assurance contract
+         */
+        ASSURANCE_CONTRACT_CLAIM,
+        /**
+         * Transaction that makes a pledge to an assurance contract.
+         */
+        ASSURANCE_CONTRACT_PLEDGE,
+        /**
+         * Send-to-self transaction that exists just to create an output of the right size we can pledge.
+         */
+        ASSURANCE_CONTRACT_STUB,
+        /**
+         * Raise fee, e.g. child-pays-for-parent.
+         */
+        RAISE_FEE,
+        // In future: de/refragmentation, privacy boosting/mixing, etc.
+        // When adding a value, it also needs to be added to wallet.proto, WalletProtobufSerialize.makeTxProto()
+        // and WalletProtobufSerializer.readTransaction()!
+    }
+
+    /**
+     * These constants are a part of a scriptSig signature on the inputs. They define the details of how a
+     * transaction can be redeemed, specifically, they control how the hash of the transaction is calculated.
+     */
+    public enum SigHash {
+        ALL(1),
+        NONE(2),
+        FORKID(0x40),
+        SINGLE(3),
+        ANYONECANPAY(0x80), // Caution: Using this type in isolation is non-standard. Treated similar to ANYONECANPAY_ALL.
+        ANYONECANPAY_ALL(0x81),
+        ANYONECANPAY_NONE(0x82),
+        ANYONECANPAY_SINGLE(0x83),
+        UNSET(0); // Caution: Using this type in isolation is non-standard. Treated similar to ALL.
+
+        public final int value;
+
+        /**
+         * @param value
+         */
+        SigHash(final int value) {
+            this.value = value;
+        }
+
+        /**
+         * @return the value as a byte
+         */
+        public byte byteValue() {
+            return (byte) this.value;
+        }
     }
 }

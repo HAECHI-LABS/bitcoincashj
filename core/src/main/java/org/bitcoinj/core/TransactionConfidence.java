@@ -22,8 +22,8 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import org.bitcoinj.utils.ListenerRegistration;
 import org.bitcoinj.utils.Threading;
-import org.bitcoinj.wallet.selector.CoinSelector;
 import org.bitcoinj.wallet.Wallet;
+import org.bitcoinj.wallet.selector.CoinSelector;
 
 import javax.annotation.Nullable;
 import java.util.*;
@@ -64,12 +64,18 @@ import static com.google.common.base.Preconditions.checkState;
  * To make a copy that won't be changed, use {@link TransactionConfidence#duplicate()}.
  */
 public class TransactionConfidence {
-    public static class Factory {
-        public TransactionConfidence createConfidence(Sha256Hash hash) {
-            return new TransactionConfidence(hash);
-        }
-    }
-
+    // This is used to ensure that confidence objects which aren't referenced from anywhere but which have an event
+    // listener set on them don't become eligible for garbage collection. Otherwise the TxConfidenceTable, which only
+    // has weak references to these objects, would not be enough to keep the event listeners working as transactions
+    // propagate around the network - it cannot know directly if the API user is interested in the object, so it uses
+    // heap reachability as a proxy for interest.
+    //
+    // We add ourselves to this set when a listener is added and remove ourselves when the listener list is empty.
+    private static final Set<TransactionConfidence> pinnedConfidenceObjects = Collections.synchronizedSet(new HashSet<TransactionConfidence>());
+    /**
+     * The Transaction that this confidence object is associated with.
+     */
+    private final Sha256Hash hash;
     /**
      * The peers that have announced the transaction to us. Network nodes don't have stable identities, so we use
      * IP address as an approximation. It's obviously vulnerable to being gamed if we allow arbitrary people to connect
@@ -80,93 +86,15 @@ public class TransactionConfidence {
      * The time the transaction was last announced to us.
      */
     private Date lastBroadcastedAt;
-    /**
-     * The Transaction that this confidence object is associated with.
-     */
-    private final Sha256Hash hash;
     // Lazily created listeners array.
     private CopyOnWriteArrayList<ListenerRegistration<Listener>> listeners;
 
     // The depth of the transaction on the best chain in blocks. An unconfirmed block has depth 0.
     private int depth;
-
-    /**
-     * Describes the state of the transaction in general terms. Properties can be read to learn specifics.
-     */
-    public enum ConfidenceType {
-        /**
-         * If BUILDING, then the transaction is included in the best chain and your confidence in it is increasing.
-         */
-        BUILDING(1),
-
-        /**
-         * If PENDING, then the transaction is unconfirmed and should be included shortly, as long as it is being
-         * announced and is considered valid by the network. A pending transaction will be announced if the containing
-         * wallet has been attached to a live {@link PeerGroup} using {@link PeerGroup#addWallet(Wallet)}.
-         * You can estimate how likely the transaction is to be included by connecting to a bunch of nodes then measuring
-         * how many announce it, using {@link TransactionConfidence#numBroadcastPeers()}.
-         * Or if you saw it from a trusted peer, you can assume it's valid and will get mined sooner or later as well.
-         */
-        PENDING(2),
-
-        /**
-         * If DEAD, then it means the transaction won't confirm unless there is another re-org,
-         * because some other transaction is spending one of its inputs. Such transactions should be alerted to the user
-         * so they can take action, eg, suspending shipment of goods if they are a merchant.
-         * It can also mean that a coinbase transaction has been made dead from it being moved onto a side chain.
-         */
-        DEAD(4),
-
-        /**
-         * If IN_CONFLICT, then it means there is another transaction (or several other transactions) spending one
-         * (or several) of its inputs but nor this transaction nor the other/s transaction/s are included in the best chain.
-         * The other/s transaction/s should be IN_CONFLICT too.
-         * IN_CONFLICT can be thought as an intermediary state between a) PENDING and BUILDING or b) PENDING and DEAD.
-         * Another common name for this situation is "double spend".
-         */
-        IN_CONFLICT(5),
-
-        /**
-         * If a transaction hasn't been broadcast yet, or there's no record of it, its confidence is UNKNOWN.
-         */
-        UNKNOWN(0);
-
-        private int value;
-
-        ConfidenceType(int value) {
-            this.value = value;
-        }
-
-        public int getValue() {
-            return value;
-        }
-    }
-
     private ConfidenceType confidenceType = ConfidenceType.UNKNOWN;
     private int appearedAtChainHeight = -1;
     // The transaction that double spent this one, if any.
     private Transaction overridingTransaction;
-
-    /**
-     * Information about where the transaction was first seen (network, sent direct from peer, created by ourselves).
-     * Useful for risk analyzing pending transactions. Probably not that useful after a tx is included in the chain,
-     * unless re-org double spends start happening frequently.
-     */
-    public enum Source {
-        /**
-         * We don't know where the transaction came from.
-         */
-        UNKNOWN,
-        /**
-         * We got this transaction from a network peer.
-         */
-        NETWORK,
-        /**
-         * This transaction was created by our own wallet, so we know it's not a double spend.
-         */
-        SELF
-    }
-
     private Source source = Source.UNKNOWN;
 
     public TransactionConfidence(Sha256Hash hash) {
@@ -175,54 +103,6 @@ public class TransactionConfidence {
         listeners = new CopyOnWriteArrayList<>();
         this.hash = hash;
     }
-
-    /**
-     * <p>A confidence listener is informed when the level of {@link TransactionConfidence} is updated by something, like
-     * for example a {@link Wallet}. You can add listeners to update your user interface or manage your order tracking
-     * system when confidence levels pass a certain threshold. <b>Note that confidence can go down as well as up.</b>
-     * For example, this can happen if somebody is doing a double-spend attack against you. Whilst it's unlikely, your
-     * code should be able to handle that in order to be correct.</p>
-     *
-     * <p>During listener execution, it's safe to remove the current listener but not others.</p>
-     */
-    public interface Listener {
-        /**
-         * An enum that describes why a transaction confidence listener is being invoked (i.e. the class of change).
-         */
-        enum ChangeReason {
-            /**
-             * Occurs when the type returned by {@link TransactionConfidence#getConfidenceType()}
-             * has changed. For example, if a PENDING transaction changes to BUILDING or DEAD, then this reason will
-             * be given. It's a high level summary.
-             */
-            TYPE,
-
-            /**
-             * Occurs when a transaction that is in the best known block chain gets buried by another block. If you're
-             * waiting for a certain number of confirmations, this is the reason to watch out for.
-             */
-            DEPTH,
-
-            /**
-             * Occurs when a pending transaction (not in the chain) was announced by another connected peers. By
-             * watching the number of peers that announced a transaction go up, you can see whether it's being
-             * accepted by the network or not. If all your peers announce, it's a pretty good bet the transaction
-             * is considered relayable and has thus reached the miners.
-             */
-            SEEN_PEERS,
-        }
-
-        void onConfidenceChanged(TransactionConfidence confidence, ChangeReason reason);
-    }
-
-    // This is used to ensure that confidence objects which aren't referenced from anywhere but which have an event
-    // listener set on them don't become eligible for garbage collection. Otherwise the TxConfidenceTable, which only
-    // has weak references to these objects, would not be enough to keep the event listeners working as transactions
-    // propagate around the network - it cannot know directly if the API user is interested in the object, so it uses
-    // heap reachability as a proxy for interest.
-    //
-    // We add ourselves to this set when a listener is added and remove ourselves when the listener list is empty.
-    private static final Set<TransactionConfidence> pinnedConfidenceObjects = Collections.synchronizedSet(new HashSet<TransactionConfidence>());
 
     /**
      * <p>Adds an event listener that will be run when this confidence object is updated. The listener will be locked and
@@ -307,7 +187,6 @@ public class TransactionConfidence {
             appearedAtChainHeight = -1;
         }
     }
-
 
     /**
      * Called by a {@link Peer} when a transaction is pending and announced by a peer. The more peers announce the
@@ -546,5 +425,122 @@ public class TransactionConfidence {
 
     public Sha256Hash getTransactionHash() {
         return hash;
+    }
+
+    /**
+     * Describes the state of the transaction in general terms. Properties can be read to learn specifics.
+     */
+    public enum ConfidenceType {
+        /**
+         * If BUILDING, then the transaction is included in the best chain and your confidence in it is increasing.
+         */
+        BUILDING(1),
+
+        /**
+         * If PENDING, then the transaction is unconfirmed and should be included shortly, as long as it is being
+         * announced and is considered valid by the network. A pending transaction will be announced if the containing
+         * wallet has been attached to a live {@link PeerGroup} using {@link PeerGroup#addWallet(Wallet)}.
+         * You can estimate how likely the transaction is to be included by connecting to a bunch of nodes then measuring
+         * how many announce it, using {@link TransactionConfidence#numBroadcastPeers()}.
+         * Or if you saw it from a trusted peer, you can assume it's valid and will get mined sooner or later as well.
+         */
+        PENDING(2),
+
+        /**
+         * If DEAD, then it means the transaction won't confirm unless there is another re-org,
+         * because some other transaction is spending one of its inputs. Such transactions should be alerted to the user
+         * so they can take action, eg, suspending shipment of goods if they are a merchant.
+         * It can also mean that a coinbase transaction has been made dead from it being moved onto a side chain.
+         */
+        DEAD(4),
+
+        /**
+         * If IN_CONFLICT, then it means there is another transaction (or several other transactions) spending one
+         * (or several) of its inputs but nor this transaction nor the other/s transaction/s are included in the best chain.
+         * The other/s transaction/s should be IN_CONFLICT too.
+         * IN_CONFLICT can be thought as an intermediary state between a) PENDING and BUILDING or b) PENDING and DEAD.
+         * Another common name for this situation is "double spend".
+         */
+        IN_CONFLICT(5),
+
+        /**
+         * If a transaction hasn't been broadcast yet, or there's no record of it, its confidence is UNKNOWN.
+         */
+        UNKNOWN(0);
+
+        private int value;
+
+        ConfidenceType(int value) {
+            this.value = value;
+        }
+
+        public int getValue() {
+            return value;
+        }
+    }
+
+    /**
+     * Information about where the transaction was first seen (network, sent direct from peer, created by ourselves).
+     * Useful for risk analyzing pending transactions. Probably not that useful after a tx is included in the chain,
+     * unless re-org double spends start happening frequently.
+     */
+    public enum Source {
+        /**
+         * We don't know where the transaction came from.
+         */
+        UNKNOWN,
+        /**
+         * We got this transaction from a network peer.
+         */
+        NETWORK,
+        /**
+         * This transaction was created by our own wallet, so we know it's not a double spend.
+         */
+        SELF
+    }
+
+    /**
+     * <p>A confidence listener is informed when the level of {@link TransactionConfidence} is updated by something, like
+     * for example a {@link Wallet}. You can add listeners to update your user interface or manage your order tracking
+     * system when confidence levels pass a certain threshold. <b>Note that confidence can go down as well as up.</b>
+     * For example, this can happen if somebody is doing a double-spend attack against you. Whilst it's unlikely, your
+     * code should be able to handle that in order to be correct.</p>
+     *
+     * <p>During listener execution, it's safe to remove the current listener but not others.</p>
+     */
+    public interface Listener {
+        void onConfidenceChanged(TransactionConfidence confidence, ChangeReason reason);
+
+        /**
+         * An enum that describes why a transaction confidence listener is being invoked (i.e. the class of change).
+         */
+        enum ChangeReason {
+            /**
+             * Occurs when the type returned by {@link TransactionConfidence#getConfidenceType()}
+             * has changed. For example, if a PENDING transaction changes to BUILDING or DEAD, then this reason will
+             * be given. It's a high level summary.
+             */
+            TYPE,
+
+            /**
+             * Occurs when a transaction that is in the best known block chain gets buried by another block. If you're
+             * waiting for a certain number of confirmations, this is the reason to watch out for.
+             */
+            DEPTH,
+
+            /**
+             * Occurs when a pending transaction (not in the chain) was announced by another connected peers. By
+             * watching the number of peers that announced a transaction go up, you can see whether it's being
+             * accepted by the network or not. If all your peers announce, it's a pretty good bet the transaction
+             * is considered relayable and has thus reached the miners.
+             */
+            SEEN_PEERS,
+        }
+    }
+
+    public static class Factory {
+        public TransactionConfidence createConfidence(Sha256Hash hash) {
+            return new TransactionConfidence(hash);
+        }
     }
 }

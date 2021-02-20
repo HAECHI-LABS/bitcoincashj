@@ -54,6 +54,7 @@ import static javafx.beans.binding.Bindings.convert;
  * that shows a QRcode.
  */
 public class ClickableBitcoinAddress extends AnchorPane {
+    private final StringExpression addressStr;
     @FXML
     protected Label addressLabel;
     @FXML
@@ -62,9 +63,7 @@ public class ClickableBitcoinAddress extends AnchorPane {
     protected Label copyWidget;
     @FXML
     protected Label qrCode;
-
     protected SimpleObjectProperty<Address> address = new SimpleObjectProperty<>();
-    private final StringExpression addressStr;
 
     public ClickableBitcoinAddress() {
         try {

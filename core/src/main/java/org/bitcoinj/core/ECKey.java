@@ -91,8 +91,6 @@ import static com.google.common.base.Preconditions.*;
  * can usually ignore the compressed/uncompressed distinction.</p>
  */
 public class ECKey implements EncryptableItem {
-    private static final Logger log = LoggerFactory.getLogger(ECKey.class);
-
     /**
      * Sorts oldest keys first, newest last.
      */
@@ -106,7 +104,6 @@ public class ECKey implements EncryptableItem {
                 return k1.creationTimeSeconds > k2.creationTimeSeconds ? 1 : -1;
         }
     };
-
     /**
      * Compares pub key bytes using {@link com.google.common.primitives.UnsignedBytes#lexicographicalComparator()}
      */
@@ -118,22 +115,31 @@ public class ECKey implements EncryptableItem {
             return comparator.compare(k1.getPubKey(), k2.getPubKey());
         }
     };
-
-    // The parameters of the secp256k1 curve that Bitcoin uses.
-    private static final X9ECParameters CURVE_PARAMS = CustomNamedCurves.getByName("secp256k1");
-
     /**
      * The parameters of the secp256k1 curve that Bitcoin uses.
      */
     public static final ECDomainParameters CURVE;
-
     /**
      * Equal to CURVE.getN().shiftRight(1), used for canonicalising the S value of a signature. If you aren't
      * sure what this is about, you can ignore it.
      */
     public static final BigInteger HALF_CURVE_ORDER;
-
+    private static final Logger log = LoggerFactory.getLogger(ECKey.class);
+    // The parameters of the secp256k1 curve that Bitcoin uses.
+    private static final X9ECParameters CURVE_PARAMS = CustomNamedCurves.getByName("secp256k1");
     private static final SecureRandom secureRandom;
+    /**
+     * The string that prefixes all text messages signed using Bitcoin keys.
+     */
+    private static final String BITCOIN_SIGNED_MESSAGE_HEADER = "Bitcoin Signed Message:\n";
+    private static final byte[] BITCOIN_SIGNED_MESSAGE_HEADER_BYTES = BITCOIN_SIGNED_MESSAGE_HEADER.getBytes(StandardCharsets.UTF_8);
+    /**
+     * If this global variable is set to true, sign() creates a dummy signature and verify() always returns true.
+     * This is intended to help accelerate unit tests that do a lot of signing/verifying, which in the debugger
+     * can be painfully slow.
+     */
+    @VisibleForTesting
+    public static boolean FAKE_SIGNATURES = false;
 
     static {
         // Init proper random number generator, as some old Android installations have bugs that make it unsecure.
@@ -152,14 +158,11 @@ public class ECKey implements EncryptableItem {
     @Nullable
     protected final BigInteger priv;  // A field element.
     protected final LazyECPoint pub;
-
     // Creation time of the key in seconds since the epoch, or zero if the key was deserialized from a version that did
     // not have this field.
     protected long creationTimeSeconds;
-
     protected KeyCrypter keyCrypter;
     protected EncryptedData encryptedPrivateKey;
-
     private byte[] pubKeyHash;
 
     /**
@@ -201,6 +204,67 @@ public class ECKey implements EncryptableItem {
         }
         this.priv = priv;
         this.pub = checkNotNull(pub);
+    }
+
+    /**
+     * Creates an ECKey given only the private key bytes. This is the same as using the BigInteger constructor, but
+     * is more convenient if you are importing a key from elsewhere. The public key will be automatically derived
+     * from the private key.
+     */
+    @Deprecated
+    public ECKey(@Nullable byte[] privKeyBytes, @Nullable byte[] pubKey) {
+        this(privKeyBytes == null ? null : new BigInteger(1, privKeyBytes), pubKey);
+    }
+
+    /**
+     * Create a new ECKey with an encrypted private key, a public key and a KeyCrypter.
+     *
+     * @param encryptedPrivateKey The private key, encrypted,
+     * @param pubKey              The keys public key
+     * @param keyCrypter          The KeyCrypter that will be used, with an AES key, to encrypt and decrypt the private key
+     */
+    @Deprecated
+    public ECKey(EncryptedData encryptedPrivateKey, byte[] pubKey, KeyCrypter keyCrypter) {
+        this((byte[]) null, pubKey);
+
+        this.keyCrypter = checkNotNull(keyCrypter);
+        this.encryptedPrivateKey = encryptedPrivateKey;
+    }
+
+    /**
+     * Creates an ECKey given either the private key only, the public key only, or both. If only the private key
+     * is supplied, the public key will be calculated from it (this is slow). If both are supplied, it's assumed
+     * the public key already correctly matches the private key. If only the public key is supplied, this ECKey cannot
+     * be used for signing.
+     *
+     * @param compressed If set to true and pubKey is null, the derived public key will be in compressed form.
+     */
+    @Deprecated
+    public ECKey(@Nullable BigInteger privKey, @Nullable byte[] pubKey, boolean compressed) {
+        if (privKey == null && pubKey == null)
+            throw new IllegalArgumentException("ECKey requires at least private or public key");
+        this.priv = privKey;
+        if (pubKey == null) {
+            // Derive public from private.
+            ECPoint point = publicPointFromPrivate(privKey);
+            this.pub = getPointWithCompression(point, compressed);
+        } else {
+            // We expect the pubkey to be in regular encoded form, just as a BigInteger. Therefore the first byte is
+            // a special marker byte.
+            // TODO: This is probably not a useful API and may be confusing.
+            this.pub = new LazyECPoint(CURVE.getCurve(), pubKey);
+        }
+    }
+
+    /**
+     * Creates an ECKey given either the private key only, the public key only, or both. If only the private key
+     * is supplied, the public key will be calculated from it (this is slow). If both are supplied, it's assumed
+     * the public key already correctly matches the public key. If only the public key is supplied, this ECKey cannot
+     * be used for signing.
+     */
+    @Deprecated
+    private ECKey(@Nullable BigInteger privKey, @Nullable byte[] pubKey) {
+        this(privKey, pubKey, false);
     }
 
     /**
@@ -310,42 +374,6 @@ public class ECKey implements EncryptableItem {
     }
 
     /**
-     * Returns a copy of this key, but with the public point represented in uncompressed form. Normally you would
-     * never need this: it's for specialised scenarios or when backwards compatibility in encoded form is necessary.
-     */
-    public ECKey decompress() {
-        if (!pub.isCompressed())
-            return this;
-        else
-            return new ECKey(priv, getPointWithCompression(pub.get(), false));
-    }
-
-    /**
-     * Creates an ECKey given only the private key bytes. This is the same as using the BigInteger constructor, but
-     * is more convenient if you are importing a key from elsewhere. The public key will be automatically derived
-     * from the private key.
-     */
-    @Deprecated
-    public ECKey(@Nullable byte[] privKeyBytes, @Nullable byte[] pubKey) {
-        this(privKeyBytes == null ? null : new BigInteger(1, privKeyBytes), pubKey);
-    }
-
-    /**
-     * Create a new ECKey with an encrypted private key, a public key and a KeyCrypter.
-     *
-     * @param encryptedPrivateKey The private key, encrypted,
-     * @param pubKey              The keys public key
-     * @param keyCrypter          The KeyCrypter that will be used, with an AES key, to encrypt and decrypt the private key
-     */
-    @Deprecated
-    public ECKey(EncryptedData encryptedPrivateKey, byte[] pubKey, KeyCrypter keyCrypter) {
-        this((byte[]) null, pubKey);
-
-        this.keyCrypter = checkNotNull(keyCrypter);
-        this.encryptedPrivateKey = encryptedPrivateKey;
-    }
-
-    /**
      * Constructs a key that has an encrypted private component. The given object wraps encrypted bytes and an
      * initialization vector. Note that the key will not be decrypted during this call: the returned ECKey is
      * unusable for signing unless a decryption key is supplied.
@@ -355,95 +383,6 @@ public class ECKey implements EncryptableItem {
         key.encryptedPrivateKey = checkNotNull(encryptedPrivateKey);
         key.keyCrypter = checkNotNull(crypter);
         return key;
-    }
-
-    /**
-     * Creates an ECKey given either the private key only, the public key only, or both. If only the private key
-     * is supplied, the public key will be calculated from it (this is slow). If both are supplied, it's assumed
-     * the public key already correctly matches the private key. If only the public key is supplied, this ECKey cannot
-     * be used for signing.
-     *
-     * @param compressed If set to true and pubKey is null, the derived public key will be in compressed form.
-     */
-    @Deprecated
-    public ECKey(@Nullable BigInteger privKey, @Nullable byte[] pubKey, boolean compressed) {
-        if (privKey == null && pubKey == null)
-            throw new IllegalArgumentException("ECKey requires at least private or public key");
-        this.priv = privKey;
-        if (pubKey == null) {
-            // Derive public from private.
-            ECPoint point = publicPointFromPrivate(privKey);
-            this.pub = getPointWithCompression(point, compressed);
-        } else {
-            // We expect the pubkey to be in regular encoded form, just as a BigInteger. Therefore the first byte is
-            // a special marker byte.
-            // TODO: This is probably not a useful API and may be confusing.
-            this.pub = new LazyECPoint(CURVE.getCurve(), pubKey);
-        }
-    }
-
-    /**
-     * Creates an ECKey given either the private key only, the public key only, or both. If only the private key
-     * is supplied, the public key will be calculated from it (this is slow). If both are supplied, it's assumed
-     * the public key already correctly matches the public key. If only the public key is supplied, this ECKey cannot
-     * be used for signing.
-     */
-    @Deprecated
-    private ECKey(@Nullable BigInteger privKey, @Nullable byte[] pubKey) {
-        this(privKey, pubKey, false);
-    }
-
-    /**
-     * Returns true if this key doesn't have unencrypted access to private key bytes. This may be because it was never
-     * given any private key bytes to begin with (a watching key), or because the key is encrypted. You can use
-     * {@link #isEncrypted()} to tell the cases apart.
-     */
-    public boolean isPubKeyOnly() {
-        return priv == null;
-    }
-
-    /**
-     * Returns true if this key has unencrypted access to private key bytes. Does the opposite of
-     * {@link #isPubKeyOnly()}.
-     */
-    public boolean hasPrivKey() {
-        return priv != null;
-    }
-
-    /**
-     * Returns true if this key is watch only, meaning it has a public key but no private key.
-     */
-    public boolean isWatching() {
-        return isPubKeyOnly() && !isEncrypted();
-    }
-
-    /**
-     * Output this ECKey as an ASN.1 encoded private key, as understood by OpenSSL or used by Bitcoin Core
-     * in its wallet storage format.
-     *
-     * @throws org.bitcoinj.core.ECKey.MissingPrivateKeyException if the private key is missing or encrypted.
-     */
-    public byte[] toASN1() {
-        try {
-            byte[] privKeyBytes = getPrivKeyBytes();
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(400);
-
-            // ASN1_SEQUENCE(EC_PRIVATEKEY) = {
-            //   ASN1_SIMPLE(EC_PRIVATEKEY, version, LONG),
-            //   ASN1_SIMPLE(EC_PRIVATEKEY, privateKey, ASN1_OCTET_STRING),
-            //   ASN1_EXP_OPT(EC_PRIVATEKEY, parameters, ECPKPARAMETERS, 0),
-            //   ASN1_EXP_OPT(EC_PRIVATEKEY, publicKey, ASN1_BIT_STRING, 1)
-            // } ASN1_SEQUENCE_END(EC_PRIVATEKEY)
-            DERSequenceGenerator seq = new DERSequenceGenerator(baos);
-            seq.addObject(new ASN1Integer(1)); // version
-            seq.addObject(new DEROctetString(privKeyBytes));
-            seq.addObject(new DERTaggedObject(0, CURVE_PARAMS.toASN1Primitive()));
-            seq.addObject(new DERTaggedObject(1, new DERBitString(getPubKey())));
-            seq.close();
-            return baos.toByteArray();
-        } catch (IOException e) {
-            throw new RuntimeException(e);  // Cannot happen, writing to memory stream.
-        }
     }
 
     /**
@@ -468,240 +407,6 @@ public class ECKey implements EncryptableItem {
             privKey = privKey.mod(CURVE.getN());
         }
         return new FixedPointCombMultiplier().multiply(CURVE.getG(), privKey);
-    }
-
-    /**
-     * Gets the hash160 form of the public key (as seen in addresses).
-     */
-    public byte[] getPubKeyHash() {
-        if (pubKeyHash == null)
-            pubKeyHash = Utils.sha256hash160(this.pub.getEncoded());
-        return pubKeyHash;
-    }
-
-    /**
-     * Gets the raw public key value. This appears in transaction scriptSigs. Note that this is <b>not</b> the same
-     * as the pubKeyHash/address.
-     */
-    public byte[] getPubKey() {
-        return pub.getEncoded();
-    }
-
-    /**
-     * Gets the public key in the form of an elliptic curve point object from Bouncy Castle.
-     */
-    public ECPoint getPubKeyPoint() {
-        return pub.get();
-    }
-
-    /**
-     * Gets the private key in the form of an integer field element. The public key is derived by performing EC
-     * point addition this number of times (i.e. point multiplying).
-     *
-     * @throws java.lang.IllegalStateException if the private key bytes are not available.
-     */
-    public BigInteger getPrivKey() {
-        if (priv == null)
-            throw new MissingPrivateKeyException();
-        return priv;
-    }
-
-    /**
-     * Returns whether this key is using the compressed form or not. Compressed pubkeys are only 33 bytes, not 64.
-     */
-    public boolean isCompressed() {
-        return pub.isCompressed();
-    }
-
-    /**
-     * Groups the two components that make up a signature, and provides a way to encode to DER form, which is
-     * how ECDSA signatures are represented when embedded in other data structures in the Bitcoin protocol. The raw
-     * components can be useful for doing further EC maths on them.
-     */
-    public static class ECDSASignature {
-        /**
-         * The two components of the signature.
-         */
-        public final BigInteger r, s;
-
-        /**
-         * Constructs a signature with the given components. Does NOT automatically canonicalise the signature.
-         */
-        public ECDSASignature(BigInteger r, BigInteger s) {
-            this.r = r;
-            this.s = s;
-        }
-
-        /**
-         * Returns true if the S component is "low", that means it is below {@link ECKey#HALF_CURVE_ORDER}. See <a
-         * href="https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki#Low_S_values_in_signatures">BIP62</a>.
-         */
-        public boolean isCanonical() {
-            return s.compareTo(HALF_CURVE_ORDER) <= 0;
-        }
-
-        /**
-         * Will automatically adjust the S component to be less than or equal to half the curve order, if necessary.
-         * This is required because for every signature (r,s) the signature (r, -s (mod N)) is a valid signature of
-         * the same message. However, we dislike the ability to modify the bits of a Bitcoin transaction after it's
-         * been signed, as that violates various assumed invariants. Thus in future only one of those forms will be
-         * considered legal and the other will be banned.
-         */
-        public ECDSASignature toCanonicalised() {
-            if (!isCanonical()) {
-                // The order of the curve is the number of valid points that exist on that curve. If S is in the upper
-                // half of the number of valid points, then bring it back to the lower half. Otherwise, imagine that
-                //    N = 10
-                //    s = 8, so (-8 % 10 == 2) thus both (r, 8) and (r, 2) are valid solutions.
-                //    10 - 8 == 2, giving us always the latter solution, which is canonical.
-                return new ECDSASignature(r, CURVE.getN().subtract(s));
-            } else {
-                return this;
-            }
-        }
-
-        /**
-         * DER is an international standard for serializing data structures which is widely used in cryptography.
-         * It's somewhat like protocol buffers but less convenient. This method returns a standard DER encoding
-         * of the signature, as recognized by OpenSSL and other libraries.
-         */
-        public byte[] encodeToDER() {
-            try {
-                return derByteStream().toByteArray();
-            } catch (IOException e) {
-                throw new RuntimeException(e);  // Cannot happen.
-            }
-        }
-
-        /**
-         * @throws SignatureDecodeException if the signature is unparseable in some way.
-         */
-        public static ECDSASignature decodeFromDER(byte[] bytes) throws SignatureDecodeException {
-            ASN1InputStream decoder = null;
-            try {
-                // BouncyCastle by default is strict about parsing ASN.1 integers. We relax this check, because some
-                // Bitcoin signatures would not parse.
-                Properties.setThreadOverride("org.bouncycastle.asn1.allow_unsafe_integer", true);
-                decoder = new ASN1InputStream(bytes);
-                final ASN1Primitive seqObj = decoder.readObject();
-                if (seqObj == null)
-                    throw new SignatureDecodeException("Reached past end of ASN.1 stream.");
-                if (!(seqObj instanceof DLSequence))
-                    throw new SignatureDecodeException("Read unexpected class: " + seqObj.getClass().getName());
-                final DLSequence seq = (DLSequence) seqObj;
-                ASN1Integer r, s;
-                try {
-                    r = (ASN1Integer) seq.getObjectAt(0);
-                    s = (ASN1Integer) seq.getObjectAt(1);
-                } catch (ClassCastException e) {
-                    throw new SignatureDecodeException(e);
-                }
-                // OpenSSL deviates from the DER spec by interpreting these values as unsigned, though they should not be
-                // Thus, we always use the positive versions. See: http://r6.ca/blog/20111119T211504Z.html
-                return new ECDSASignature(r.getPositiveValue(), s.getPositiveValue());
-            } catch (IOException e) {
-                throw new SignatureDecodeException(e);
-            } finally {
-                if (decoder != null)
-                    try {
-                        decoder.close();
-                    } catch (IOException x) {
-                    }
-                Properties.removeThreadOverride("org.bouncycastle.asn1.allow_unsafe_integer");
-            }
-        }
-
-        protected ByteArrayOutputStream derByteStream() throws IOException {
-            // Usually 70-72 bytes.
-            ByteArrayOutputStream bos = new ByteArrayOutputStream(72);
-            DERSequenceGenerator seq = new DERSequenceGenerator(bos);
-            seq.addObject(new ASN1Integer(r));
-            seq.addObject(new ASN1Integer(s));
-            seq.close();
-            return bos;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            ECDSASignature other = (ECDSASignature) o;
-            return r.equals(other.r) && s.equals(other.s);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(r, s);
-        }
-    }
-
-    /**
-     * Signs the given hash and returns the R and S components as BigIntegers. In the Bitcoin protocol, they are
-     * usually encoded using ASN.1 format, so you want {@link ECKey.ECDSASignature#toASN1()}
-     * instead. However sometimes the independent components can be useful, for instance, if you're going to do
-     * further EC maths on them.
-     *
-     * @throws KeyCrypterException if this ECKey doesn't have a private part.
-     */
-    public ECDSASignature sign(Sha256Hash input) throws KeyCrypterException {
-        return sign(input, null);
-    }
-
-    /**
-     * If this global variable is set to true, sign() creates a dummy signature and verify() always returns true.
-     * This is intended to help accelerate unit tests that do a lot of signing/verifying, which in the debugger
-     * can be painfully slow.
-     */
-    @VisibleForTesting
-    public static boolean FAKE_SIGNATURES = false;
-
-    /**
-     * Signs the given hash and returns the R and S components as BigIntegers. In the Bitcoin protocol, they are
-     * usually encoded using DER format, so you want {@link ECKey.ECDSASignature#encodeToDER()}
-     * instead. However sometimes the independent components can be useful, for instance, if you're doing to do further
-     * EC maths on them.
-     *
-     * @param aesKey The AES key to use for decryption of the private key. If null then no decryption is required.
-     * @throws KeyCrypterException              if there's something wrong with aesKey.
-     * @throws ECKey.MissingPrivateKeyException if this key cannot sign because it's pubkey only.
-     */
-    public ECDSASignature sign(Sha256Hash input, @Nullable KeyParameter aesKey) throws KeyCrypterException {
-        KeyCrypter crypter = getKeyCrypter();
-        if (crypter != null) {
-            if (aesKey == null)
-                throw new KeyIsEncryptedException();
-            return decrypt(aesKey).sign(input);
-        } else {
-            // No decryption of private key required.
-            if (priv == null)
-                throw new MissingPrivateKeyException();
-        }
-        return doSign(input, priv);
-    }
-
-    protected ECDSASignature doSign(Sha256Hash input, BigInteger privateKeyForSigning) {
-        if (Secp256k1Context.isEnabled()) {
-            try {
-                byte[] signature = NativeSecp256k1.sign(
-                        input.getBytes(),
-                        Utils.bigIntegerToBytes(privateKeyForSigning, 32)
-                );
-                return ECDSASignature.decodeFromDER(signature);
-            } catch (NativeSecp256k1Util.AssertFailException e) {
-                log.error("Caught AssertFailException inside secp256k1", e);
-                throw new RuntimeException(e);
-            } catch (SignatureDecodeException e) {
-                throw new RuntimeException(e); // cannot happen
-            }
-        }
-        if (FAKE_SIGNATURES)
-            return TransactionSignature.dummy();
-        checkNotNull(privateKeyForSigning);
-        ECDSASigner signer = new ECDSASigner(new HMacDSAKCalculator(new SHA256Digest()));
-        ECPrivateKeyParameters privKey = new ECPrivateKeyParameters(privateKeyForSigning, CURVE);
-        signer.init(true, privKey);
-        BigInteger[] components = signer.generateSignature(input.getBytes());
-        return new ECDSASignature(components[0], components[1]).toCanonicalised();
     }
 
     /**
@@ -762,51 +467,6 @@ public class ECKey implements EncryptableItem {
 
     public static boolean verifySchnorr(byte[] sigHash, SchnorrSignature signature, byte[] pubKey) {
         return SchnorrSignature.schnorr_verify(sigHash, pubKey, signature.getSignature());
-    }
-
-    /**
-     * Verifies the given ASN.1 encoded ECDSA signature against a hash using the public key.
-     *
-     * @param hash      Hash of the data to verify.
-     * @param signature ASN.1 encoded signature.
-     * @throws SignatureDecodeException if the signature is unparseable in some way.
-     */
-    public boolean verify(byte[] hash, byte[] signature) throws SignatureDecodeException {
-        return ECKey.verify(hash, signature, getPubKey());
-    }
-
-    /**
-     * Verifies the given R/S pair (signature) against a hash using the public key.
-     */
-    public boolean verify(Sha256Hash sigHash, ECDSASignature signature) {
-        return ECKey.verify(sigHash.getBytes(), signature, getPubKey());
-    }
-
-    public boolean verifySchnorr(Sha256Hash sigHash, SchnorrSignature signature) {
-        return SchnorrSignature.schnorr_verify(sigHash.getBytes(), getPubKey(), signature.getSignature());
-    }
-
-    /**
-     * Verifies the given ASN.1 encoded ECDSA signature against a hash using the public key, and throws an exception
-     * if the signature doesn't match
-     *
-     * @throws SignatureDecodeException         if the signature is unparseable in some way.
-     * @throws java.security.SignatureException if the signature does not match.
-     */
-    public void verifyOrThrow(byte[] hash, byte[] signature) throws SignatureDecodeException, SignatureException {
-        if (!verify(hash, signature))
-            throw new SignatureException();
-    }
-
-    /**
-     * Verifies the given R/S pair (signature) against a hash using the public key, and throws an exception
-     * if the signature doesn't match
-     *
-     * @throws java.security.SignatureException if the signature does not match.
-     */
-    public void verifyOrThrow(Sha256Hash sigHash, ECDSASignature signature) throws SignatureException {
-        if (!ECKey.verify(sigHash.getBytes(), signature, getPubKey()))
-            throw new SignatureException();
     }
 
     /**
@@ -882,37 +542,6 @@ public class ECKey implements EncryptableItem {
     }
 
     /**
-     * Signs a text message using the standard Bitcoin messaging signing format and returns the signature as a base64
-     * encoded string.
-     *
-     * @throws IllegalStateException if this ECKey does not have the private part.
-     * @throws KeyCrypterException   if this ECKey is encrypted and no AESKey is provided or it does not decrypt the ECKey.
-     */
-    public String signMessage(String message) throws KeyCrypterException {
-        return signMessage(message, null);
-    }
-
-    /**
-     * Signs a text message using the standard Bitcoin messaging signing format and returns the signature as a base64
-     * encoded string.
-     *
-     * @throws IllegalStateException if this ECKey does not have the private part.
-     * @throws KeyCrypterException   if this ECKey is encrypted and no AESKey is provided or it does not decrypt the ECKey.
-     */
-    public String signMessage(String message, @Nullable KeyParameter aesKey) throws KeyCrypterException {
-        byte[] data = formatMessageForSigning(message);
-        Sha256Hash hash = Sha256Hash.twiceOf(data);
-        ECDSASignature sig = sign(hash, aesKey);
-        byte recId = findRecoveryId(hash, sig);
-        int headerByte = recId + 27 + (isCompressed() ? 4 : 0);
-        byte[] sigData = new byte[65];  // 1 header + 32 bytes for R + 32 bytes for S
-        sigData[0] = (byte) headerByte;
-        System.arraycopy(Utils.bigIntegerToBytes(sig.r, 32), 0, sigData, 1, 32);
-        System.arraycopy(Utils.bigIntegerToBytes(sig.s, 32), 0, sigData, 33, 32);
-        return new String(Base64.encode(sigData), StandardCharsets.UTF_8);
-    }
-
-    /**
      * Given an arbitrary piece of text and a Bitcoin-format message signature encoded in base64, returns an ECKey
      * containing the public key that was used to sign it. This can then be compared to the expected public key to
      * determine if the signature was correct. These sorts of signatures are compatible with the Bitcoin-Qt/bitcoind
@@ -956,36 +585,6 @@ public class ECKey implements EncryptableItem {
         if (key == null)
             throw new SignatureException("Could not recover public key from signature");
         return key;
-    }
-
-    /**
-     * Convenience wrapper around {@link ECKey#signedMessageToKey(String, String)}. If the key derived from the
-     * signature is not the same as this one, throws a SignatureException.
-     */
-    public void verifyMessage(String message, String signatureBase64) throws SignatureException {
-        ECKey key = ECKey.signedMessageToKey(message, signatureBase64);
-        if (!key.pub.equals(pub))
-            throw new SignatureException("Signature did not match for message");
-    }
-
-    /**
-     * Returns the recovery ID, a byte with value between 0 and 3, inclusive, that specifies which of 4 possible
-     * curve points was used to sign a message. This value is also referred to as "v".
-     *
-     * @throws RuntimeException if no recovery ID can be found.
-     */
-    public byte findRecoveryId(Sha256Hash hash, ECDSASignature sig) {
-        byte recId = -1;
-        for (byte i = 0; i < 4; i++) {
-            ECKey k = ECKey.recoverFromSignature(i, sig, hash, isCompressed());
-            if (k != null && k.pub.equals(pub)) {
-                recId = i;
-                break;
-            }
-        }
-        if (recId == -1)
-            throw new RuntimeException("Could not construct a recoverable key. This should never happen.");
-        return recId;
     }
 
     /**
@@ -1066,6 +665,326 @@ public class ECKey implements EncryptableItem {
         byte[] compEnc = x9.integerToBytes(xBN, 1 + x9.getByteLength(CURVE.getCurve()));
         compEnc[0] = (byte) (yBit ? 0x03 : 0x02);
         return CURVE.getCurve().decodePoint(compEnc);
+    }
+
+    /**
+     * <p>Check that it is possible to decrypt the key with the keyCrypter and that the original key is returned.</p>
+     *
+     * <p>Because it is a critical failure if the private keys cannot be decrypted successfully (resulting of loss of all
+     * bitcoins controlled by the private key) you can use this method to check when you *encrypt* a wallet that
+     * it can definitely be decrypted successfully.</p>
+     *
+     * <p>See {@link Wallet#encrypt(KeyCrypter keyCrypter, KeyParameter aesKey)} for example usage.</p>
+     *
+     * @return true if the encrypted key can be decrypted back to the original key successfully.
+     */
+    public static boolean encryptionIsReversible(ECKey originalKey, ECKey encryptedKey, KeyCrypter keyCrypter, KeyParameter aesKey) {
+        try {
+            ECKey rebornUnencryptedKey = encryptedKey.decrypt(keyCrypter, aesKey);
+            byte[] originalPrivateKeyBytes = originalKey.getPrivKeyBytes();
+            byte[] rebornKeyBytes = rebornUnencryptedKey.getPrivKeyBytes();
+            if (!Arrays.equals(originalPrivateKeyBytes, rebornKeyBytes)) {
+                log.error("The check that encryption could be reversed failed for {}", originalKey);
+                return false;
+            }
+            return true;
+        } catch (KeyCrypterException kce) {
+            log.error(kce.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * <p>Given a textual message, returns a byte buffer formatted as follows:</p>
+     * <p>{@code [24] "Bitcoin Signed Message:\n" [message.length as a varint] message}</p>
+     */
+    private static byte[] formatMessageForSigning(String message) {
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bos.write(BITCOIN_SIGNED_MESSAGE_HEADER_BYTES.length);
+            bos.write(BITCOIN_SIGNED_MESSAGE_HEADER_BYTES);
+            byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+            VarInt size = new VarInt(messageBytes.length);
+            bos.write(size.encode());
+            bos.write(messageBytes);
+            return bos.toByteArray();
+        } catch (IOException e) {
+            throw new RuntimeException(e);  // Cannot happen.
+        }
+    }
+
+    /**
+     * Returns a copy of this key, but with the public point represented in uncompressed form. Normally you would
+     * never need this: it's for specialised scenarios or when backwards compatibility in encoded form is necessary.
+     */
+    public ECKey decompress() {
+        if (!pub.isCompressed())
+            return this;
+        else
+            return new ECKey(priv, getPointWithCompression(pub.get(), false));
+    }
+
+    /**
+     * Returns true if this key doesn't have unencrypted access to private key bytes. This may be because it was never
+     * given any private key bytes to begin with (a watching key), or because the key is encrypted. You can use
+     * {@link #isEncrypted()} to tell the cases apart.
+     */
+    public boolean isPubKeyOnly() {
+        return priv == null;
+    }
+
+    /**
+     * Returns true if this key has unencrypted access to private key bytes. Does the opposite of
+     * {@link #isPubKeyOnly()}.
+     */
+    public boolean hasPrivKey() {
+        return priv != null;
+    }
+
+    /**
+     * Returns true if this key is watch only, meaning it has a public key but no private key.
+     */
+    public boolean isWatching() {
+        return isPubKeyOnly() && !isEncrypted();
+    }
+
+    /**
+     * Output this ECKey as an ASN.1 encoded private key, as understood by OpenSSL or used by Bitcoin Core
+     * in its wallet storage format.
+     *
+     * @throws org.bitcoinj.core.ECKey.MissingPrivateKeyException if the private key is missing or encrypted.
+     */
+    public byte[] toASN1() {
+        try {
+            byte[] privKeyBytes = getPrivKeyBytes();
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(400);
+
+            // ASN1_SEQUENCE(EC_PRIVATEKEY) = {
+            //   ASN1_SIMPLE(EC_PRIVATEKEY, version, LONG),
+            //   ASN1_SIMPLE(EC_PRIVATEKEY, privateKey, ASN1_OCTET_STRING),
+            //   ASN1_EXP_OPT(EC_PRIVATEKEY, parameters, ECPKPARAMETERS, 0),
+            //   ASN1_EXP_OPT(EC_PRIVATEKEY, publicKey, ASN1_BIT_STRING, 1)
+            // } ASN1_SEQUENCE_END(EC_PRIVATEKEY)
+            DERSequenceGenerator seq = new DERSequenceGenerator(baos);
+            seq.addObject(new ASN1Integer(1)); // version
+            seq.addObject(new DEROctetString(privKeyBytes));
+            seq.addObject(new DERTaggedObject(0, CURVE_PARAMS.toASN1Primitive()));
+            seq.addObject(new DERTaggedObject(1, new DERBitString(getPubKey())));
+            seq.close();
+            return baos.toByteArray();
+        } catch (IOException e) {
+            throw new RuntimeException(e);  // Cannot happen, writing to memory stream.
+        }
+    }
+
+    /**
+     * Gets the hash160 form of the public key (as seen in addresses).
+     */
+    public byte[] getPubKeyHash() {
+        if (pubKeyHash == null)
+            pubKeyHash = Utils.sha256hash160(this.pub.getEncoded());
+        return pubKeyHash;
+    }
+
+    /**
+     * Gets the raw public key value. This appears in transaction scriptSigs. Note that this is <b>not</b> the same
+     * as the pubKeyHash/address.
+     */
+    public byte[] getPubKey() {
+        return pub.getEncoded();
+    }
+
+    /**
+     * Gets the public key in the form of an elliptic curve point object from Bouncy Castle.
+     */
+    public ECPoint getPubKeyPoint() {
+        return pub.get();
+    }
+
+    /**
+     * Gets the private key in the form of an integer field element. The public key is derived by performing EC
+     * point addition this number of times (i.e. point multiplying).
+     *
+     * @throws java.lang.IllegalStateException if the private key bytes are not available.
+     */
+    public BigInteger getPrivKey() {
+        if (priv == null)
+            throw new MissingPrivateKeyException();
+        return priv;
+    }
+
+    /**
+     * Returns whether this key is using the compressed form or not. Compressed pubkeys are only 33 bytes, not 64.
+     */
+    public boolean isCompressed() {
+        return pub.isCompressed();
+    }
+
+    /**
+     * Signs the given hash and returns the R and S components as BigIntegers. In the Bitcoin protocol, they are
+     * usually encoded using ASN.1 format, so you want {@link ECKey.ECDSASignature#toASN1()}
+     * instead. However sometimes the independent components can be useful, for instance, if you're going to do
+     * further EC maths on them.
+     *
+     * @throws KeyCrypterException if this ECKey doesn't have a private part.
+     */
+    public ECDSASignature sign(Sha256Hash input) throws KeyCrypterException {
+        return sign(input, null);
+    }
+
+    /**
+     * Signs the given hash and returns the R and S components as BigIntegers. In the Bitcoin protocol, they are
+     * usually encoded using DER format, so you want {@link ECKey.ECDSASignature#encodeToDER()}
+     * instead. However sometimes the independent components can be useful, for instance, if you're doing to do further
+     * EC maths on them.
+     *
+     * @param aesKey The AES key to use for decryption of the private key. If null then no decryption is required.
+     * @throws KeyCrypterException              if there's something wrong with aesKey.
+     * @throws ECKey.MissingPrivateKeyException if this key cannot sign because it's pubkey only.
+     */
+    public ECDSASignature sign(Sha256Hash input, @Nullable KeyParameter aesKey) throws KeyCrypterException {
+        KeyCrypter crypter = getKeyCrypter();
+        if (crypter != null) {
+            if (aesKey == null)
+                throw new KeyIsEncryptedException();
+            return decrypt(aesKey).sign(input);
+        } else {
+            // No decryption of private key required.
+            if (priv == null)
+                throw new MissingPrivateKeyException();
+        }
+        return doSign(input, priv);
+    }
+
+    protected ECDSASignature doSign(Sha256Hash input, BigInteger privateKeyForSigning) {
+        if (Secp256k1Context.isEnabled()) {
+            try {
+                byte[] signature = NativeSecp256k1.sign(
+                        input.getBytes(),
+                        Utils.bigIntegerToBytes(privateKeyForSigning, 32)
+                );
+                return ECDSASignature.decodeFromDER(signature);
+            } catch (NativeSecp256k1Util.AssertFailException e) {
+                log.error("Caught AssertFailException inside secp256k1", e);
+                throw new RuntimeException(e);
+            } catch (SignatureDecodeException e) {
+                throw new RuntimeException(e); // cannot happen
+            }
+        }
+        if (FAKE_SIGNATURES)
+            return TransactionSignature.dummy();
+        checkNotNull(privateKeyForSigning);
+        ECDSASigner signer = new ECDSASigner(new HMacDSAKCalculator(new SHA256Digest()));
+        ECPrivateKeyParameters privKey = new ECPrivateKeyParameters(privateKeyForSigning, CURVE);
+        signer.init(true, privKey);
+        BigInteger[] components = signer.generateSignature(input.getBytes());
+        return new ECDSASignature(components[0], components[1]).toCanonicalised();
+    }
+
+    /**
+     * Verifies the given ASN.1 encoded ECDSA signature against a hash using the public key.
+     *
+     * @param hash      Hash of the data to verify.
+     * @param signature ASN.1 encoded signature.
+     * @throws SignatureDecodeException if the signature is unparseable in some way.
+     */
+    public boolean verify(byte[] hash, byte[] signature) throws SignatureDecodeException {
+        return ECKey.verify(hash, signature, getPubKey());
+    }
+
+    /**
+     * Verifies the given R/S pair (signature) against a hash using the public key.
+     */
+    public boolean verify(Sha256Hash sigHash, ECDSASignature signature) {
+        return ECKey.verify(sigHash.getBytes(), signature, getPubKey());
+    }
+
+    public boolean verifySchnorr(Sha256Hash sigHash, SchnorrSignature signature) {
+        return SchnorrSignature.schnorr_verify(sigHash.getBytes(), getPubKey(), signature.getSignature());
+    }
+
+    /**
+     * Verifies the given ASN.1 encoded ECDSA signature against a hash using the public key, and throws an exception
+     * if the signature doesn't match
+     *
+     * @throws SignatureDecodeException         if the signature is unparseable in some way.
+     * @throws java.security.SignatureException if the signature does not match.
+     */
+    public void verifyOrThrow(byte[] hash, byte[] signature) throws SignatureDecodeException, SignatureException {
+        if (!verify(hash, signature))
+            throw new SignatureException();
+    }
+
+    /**
+     * Verifies the given R/S pair (signature) against a hash using the public key, and throws an exception
+     * if the signature doesn't match
+     *
+     * @throws java.security.SignatureException if the signature does not match.
+     */
+    public void verifyOrThrow(Sha256Hash sigHash, ECDSASignature signature) throws SignatureException {
+        if (!ECKey.verify(sigHash.getBytes(), signature, getPubKey()))
+            throw new SignatureException();
+    }
+
+    /**
+     * Signs a text message using the standard Bitcoin messaging signing format and returns the signature as a base64
+     * encoded string.
+     *
+     * @throws IllegalStateException if this ECKey does not have the private part.
+     * @throws KeyCrypterException   if this ECKey is encrypted and no AESKey is provided or it does not decrypt the ECKey.
+     */
+    public String signMessage(String message) throws KeyCrypterException {
+        return signMessage(message, null);
+    }
+
+    /**
+     * Signs a text message using the standard Bitcoin messaging signing format and returns the signature as a base64
+     * encoded string.
+     *
+     * @throws IllegalStateException if this ECKey does not have the private part.
+     * @throws KeyCrypterException   if this ECKey is encrypted and no AESKey is provided or it does not decrypt the ECKey.
+     */
+    public String signMessage(String message, @Nullable KeyParameter aesKey) throws KeyCrypterException {
+        byte[] data = formatMessageForSigning(message);
+        Sha256Hash hash = Sha256Hash.twiceOf(data);
+        ECDSASignature sig = sign(hash, aesKey);
+        byte recId = findRecoveryId(hash, sig);
+        int headerByte = recId + 27 + (isCompressed() ? 4 : 0);
+        byte[] sigData = new byte[65];  // 1 header + 32 bytes for R + 32 bytes for S
+        sigData[0] = (byte) headerByte;
+        System.arraycopy(Utils.bigIntegerToBytes(sig.r, 32), 0, sigData, 1, 32);
+        System.arraycopy(Utils.bigIntegerToBytes(sig.s, 32), 0, sigData, 33, 32);
+        return new String(Base64.encode(sigData), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Convenience wrapper around {@link ECKey#signedMessageToKey(String, String)}. If the key derived from the
+     * signature is not the same as this one, throws a SignatureException.
+     */
+    public void verifyMessage(String message, String signatureBase64) throws SignatureException {
+        ECKey key = ECKey.signedMessageToKey(message, signatureBase64);
+        if (!key.pub.equals(pub))
+            throw new SignatureException("Signature did not match for message");
+    }
+
+    /**
+     * Returns the recovery ID, a byte with value between 0 and 3, inclusive, that specifies which of 4 possible
+     * curve points was used to sign a message. This value is also referred to as "v".
+     *
+     * @throws RuntimeException if no recovery ID can be found.
+     */
+    public byte findRecoveryId(Sha256Hash hash, ECDSASignature sig) {
+        byte recId = -1;
+        for (byte i = 0; i < 4; i++) {
+            ECKey k = ECKey.recoverFromSignature(i, sig, hash, isCompressed());
+            if (k != null && k.pub.equals(pub)) {
+                recId = i;
+                break;
+            }
+        }
+        if (recId == -1)
+            throw new RuntimeException("Could not construct a recoverable key. This should never happen.");
+        return recId;
     }
 
     /**
@@ -1172,33 +1091,6 @@ public class ECKey implements EncryptableItem {
     }
 
     /**
-     * <p>Check that it is possible to decrypt the key with the keyCrypter and that the original key is returned.</p>
-     *
-     * <p>Because it is a critical failure if the private keys cannot be decrypted successfully (resulting of loss of all
-     * bitcoins controlled by the private key) you can use this method to check when you *encrypt* a wallet that
-     * it can definitely be decrypted successfully.</p>
-     *
-     * <p>See {@link Wallet#encrypt(KeyCrypter keyCrypter, KeyParameter aesKey)} for example usage.</p>
-     *
-     * @return true if the encrypted key can be decrypted back to the original key successfully.
-     */
-    public static boolean encryptionIsReversible(ECKey originalKey, ECKey encryptedKey, KeyCrypter keyCrypter, KeyParameter aesKey) {
-        try {
-            ECKey rebornUnencryptedKey = encryptedKey.decrypt(keyCrypter, aesKey);
-            byte[] originalPrivateKeyBytes = originalKey.getPrivKeyBytes();
-            byte[] rebornKeyBytes = rebornUnencryptedKey.getPrivKeyBytes();
-            if (!Arrays.equals(originalPrivateKeyBytes, rebornKeyBytes)) {
-                log.error("The check that encryption could be reversed failed for {}", originalKey);
-                return false;
-            }
-            return true;
-        } catch (KeyCrypterException kce) {
-            log.error(kce.getMessage());
-            return false;
-        }
-    }
-
-    /**
      * Indicates whether the private key is encrypted (true) or not (false).
      * A private key is deemed to be encrypted when there is both a KeyCrypter and the encryptedPrivateKey is non-zero.
      */
@@ -1250,12 +1142,6 @@ public class ECKey implements EncryptableItem {
     @Nullable
     public KeyCrypter getKeyCrypter() {
         return keyCrypter;
-    }
-
-    public static class MissingPrivateKeyException extends RuntimeException {
-    }
-
-    public static class KeyIsEncryptedException extends MissingPrivateKeyException {
     }
 
     @Override
@@ -1345,32 +1231,135 @@ public class ECKey implements EncryptableItem {
         }
     }
 
-    /**
-     * The string that prefixes all text messages signed using Bitcoin keys.
-     */
-    private static final String BITCOIN_SIGNED_MESSAGE_HEADER = "Bitcoin Signed Message:\n";
-    private static final byte[] BITCOIN_SIGNED_MESSAGE_HEADER_BYTES = BITCOIN_SIGNED_MESSAGE_HEADER.getBytes(StandardCharsets.UTF_8);
+    public Address toAddress(NetworkParameters params) {
+        return new Address(params, getPubKeyHash());
+    }
 
     /**
-     * <p>Given a textual message, returns a byte buffer formatted as follows:</p>
-     * <p>{@code [24] "Bitcoin Signed Message:\n" [message.length as a varint] message}</p>
+     * Groups the two components that make up a signature, and provides a way to encode to DER form, which is
+     * how ECDSA signatures are represented when embedded in other data structures in the Bitcoin protocol. The raw
+     * components can be useful for doing further EC maths on them.
      */
-    private static byte[] formatMessageForSigning(String message) {
-        try {
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            bos.write(BITCOIN_SIGNED_MESSAGE_HEADER_BYTES.length);
-            bos.write(BITCOIN_SIGNED_MESSAGE_HEADER_BYTES);
-            byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
-            VarInt size = new VarInt(messageBytes.length);
-            bos.write(size.encode());
-            bos.write(messageBytes);
-            return bos.toByteArray();
-        } catch (IOException e) {
-            throw new RuntimeException(e);  // Cannot happen.
+    public static class ECDSASignature {
+        /**
+         * The two components of the signature.
+         */
+        public final BigInteger r, s;
+
+        /**
+         * Constructs a signature with the given components. Does NOT automatically canonicalise the signature.
+         */
+        public ECDSASignature(BigInteger r, BigInteger s) {
+            this.r = r;
+            this.s = s;
+        }
+
+        /**
+         * @throws SignatureDecodeException if the signature is unparseable in some way.
+         */
+        public static ECDSASignature decodeFromDER(byte[] bytes) throws SignatureDecodeException {
+            ASN1InputStream decoder = null;
+            try {
+                // BouncyCastle by default is strict about parsing ASN.1 integers. We relax this check, because some
+                // Bitcoin signatures would not parse.
+                Properties.setThreadOverride("org.bouncycastle.asn1.allow_unsafe_integer", true);
+                decoder = new ASN1InputStream(bytes);
+                final ASN1Primitive seqObj = decoder.readObject();
+                if (seqObj == null)
+                    throw new SignatureDecodeException("Reached past end of ASN.1 stream.");
+                if (!(seqObj instanceof DLSequence))
+                    throw new SignatureDecodeException("Read unexpected class: " + seqObj.getClass().getName());
+                final DLSequence seq = (DLSequence) seqObj;
+                ASN1Integer r, s;
+                try {
+                    r = (ASN1Integer) seq.getObjectAt(0);
+                    s = (ASN1Integer) seq.getObjectAt(1);
+                } catch (ClassCastException e) {
+                    throw new SignatureDecodeException(e);
+                }
+                // OpenSSL deviates from the DER spec by interpreting these values as unsigned, though they should not be
+                // Thus, we always use the positive versions. See: http://r6.ca/blog/20111119T211504Z.html
+                return new ECDSASignature(r.getPositiveValue(), s.getPositiveValue());
+            } catch (IOException e) {
+                throw new SignatureDecodeException(e);
+            } finally {
+                if (decoder != null)
+                    try {
+                        decoder.close();
+                    } catch (IOException x) {
+                    }
+                Properties.removeThreadOverride("org.bouncycastle.asn1.allow_unsafe_integer");
+            }
+        }
+
+        /**
+         * Returns true if the S component is "low", that means it is below {@link ECKey#HALF_CURVE_ORDER}. See <a
+         * href="https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki#Low_S_values_in_signatures">BIP62</a>.
+         */
+        public boolean isCanonical() {
+            return s.compareTo(HALF_CURVE_ORDER) <= 0;
+        }
+
+        /**
+         * Will automatically adjust the S component to be less than or equal to half the curve order, if necessary.
+         * This is required because for every signature (r,s) the signature (r, -s (mod N)) is a valid signature of
+         * the same message. However, we dislike the ability to modify the bits of a Bitcoin transaction after it's
+         * been signed, as that violates various assumed invariants. Thus in future only one of those forms will be
+         * considered legal and the other will be banned.
+         */
+        public ECDSASignature toCanonicalised() {
+            if (!isCanonical()) {
+                // The order of the curve is the number of valid points that exist on that curve. If S is in the upper
+                // half of the number of valid points, then bring it back to the lower half. Otherwise, imagine that
+                //    N = 10
+                //    s = 8, so (-8 % 10 == 2) thus both (r, 8) and (r, 2) are valid solutions.
+                //    10 - 8 == 2, giving us always the latter solution, which is canonical.
+                return new ECDSASignature(r, CURVE.getN().subtract(s));
+            } else {
+                return this;
+            }
+        }
+
+        /**
+         * DER is an international standard for serializing data structures which is widely used in cryptography.
+         * It's somewhat like protocol buffers but less convenient. This method returns a standard DER encoding
+         * of the signature, as recognized by OpenSSL and other libraries.
+         */
+        public byte[] encodeToDER() {
+            try {
+                return derByteStream().toByteArray();
+            } catch (IOException e) {
+                throw new RuntimeException(e);  // Cannot happen.
+            }
+        }
+
+        protected ByteArrayOutputStream derByteStream() throws IOException {
+            // Usually 70-72 bytes.
+            ByteArrayOutputStream bos = new ByteArrayOutputStream(72);
+            DERSequenceGenerator seq = new DERSequenceGenerator(bos);
+            seq.addObject(new ASN1Integer(r));
+            seq.addObject(new ASN1Integer(s));
+            seq.close();
+            return bos;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            ECDSASignature other = (ECDSASignature) o;
+            return r.equals(other.r) && s.equals(other.s);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(r, s);
         }
     }
 
-    public Address toAddress(NetworkParameters params) {
-        return new Address(params, getPubKeyHash());
+    public static class MissingPrivateKeyException extends RuntimeException {
+    }
+
+    public static class KeyIsEncryptedException extends MissingPrivateKeyException {
     }
 }

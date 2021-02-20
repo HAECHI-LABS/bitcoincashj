@@ -39,7 +39,8 @@ public final class Fiat implements Monetary, Comparable<Fiat>, Serializable {
      * 2, because in financial applications it's common to use sub-cent precision.
      */
     public static final int SMALLEST_UNIT_EXPONENT = 4;
-
+    private static final MonetaryFormat FRIENDLY_FORMAT = MonetaryFormat.FIAT.postfixCode();
+    private static final MonetaryFormat PLAIN_FORMAT = MonetaryFormat.FIAT.minDecimals(0).repeatOptionalDecimals(1, 4).noCode();
     /**
      * The number of smallest units of this monetary value.
      */
@@ -53,23 +54,6 @@ public final class Fiat implements Monetary, Comparable<Fiat>, Serializable {
 
     public static Fiat valueOf(final String currencyCode, final long value) {
         return new Fiat(currencyCode, value);
-    }
-
-    @Override
-    public int smallestUnitExponent() {
-        return SMALLEST_UNIT_EXPONENT;
-    }
-
-    /**
-     * Returns the number of "smallest units" of this monetary value.
-     */
-    @Override
-    public long getValue() {
-        return value;
-    }
-
-    public String getCurrencyCode() {
-        return currencyCode;
     }
 
     /**
@@ -102,6 +86,23 @@ public final class Fiat implements Monetary, Comparable<Fiat>, Serializable {
         } catch (ArithmeticException e) {
             throw new IllegalArgumentException(e);
         }
+    }
+
+    @Override
+    public int smallestUnitExponent() {
+        return SMALLEST_UNIT_EXPONENT;
+    }
+
+    /**
+     * Returns the number of "smallest units" of this monetary value.
+     */
+    @Override
+    public long getValue() {
+        return value;
+    }
+
+    public String getCurrencyCode() {
+        return currencyCode;
     }
 
     public Fiat add(final Fiat value) {
@@ -187,8 +188,6 @@ public final class Fiat implements Monetary, Comparable<Fiat>, Serializable {
         return this.value;
     }
 
-    private static final MonetaryFormat FRIENDLY_FORMAT = MonetaryFormat.FIAT.postfixCode();
-
     /**
      * Returns the value as a 0.12 type string. More digits after the decimal place will be used if necessary, but two
      * will always be present.
@@ -196,8 +195,6 @@ public final class Fiat implements Monetary, Comparable<Fiat>, Serializable {
     public String toFriendlyString() {
         return FRIENDLY_FORMAT.code(0, currencyCode).format(this).toString();
     }
-
-    private static final MonetaryFormat PLAIN_FORMAT = MonetaryFormat.FIAT.minDecimals(0).repeatOptionalDecimals(1, 4).noCode();
 
     /**
      * <p>

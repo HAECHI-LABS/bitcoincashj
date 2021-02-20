@@ -183,6 +183,91 @@ public class BitcoinURI {
     }
 
     /**
+     * Simple Bitcoin URI builder using known good fields.
+     *
+     * @param address The Bitcoin address
+     * @param amount  The amount
+     * @param label   A label
+     * @param message A message
+     * @return A String containing the Bitcoin URI
+     */
+    public static String convertToBitcoinURI(Address address, Coin amount,
+                                             String label, String message) {
+        return convertToBitcoinURI(address.getParameters(), address.toString(), amount, label, message);
+    }
+
+    /**
+     * Simple Bitcoin URI builder using known good fields.
+     *
+     * @param params  The network parameters that determine which network the URI
+     *                is for.
+     * @param address The Bitcoin address
+     * @param amount  The amount
+     * @param label   A label
+     * @param message A message
+     * @return A String containing the Bitcoin URI
+     */
+    public static String convertToBitcoinURI(NetworkParameters params,
+                                             String address, @Nullable Coin amount,
+                                             @Nullable String label, @Nullable String message) {
+        checkNotNull(params);
+        checkNotNull(address);
+        if (amount != null && amount.signum() < 0) {
+            throw new IllegalArgumentException("Coin must be positive");
+        }
+
+        StringBuilder builder = new StringBuilder();
+        String scheme = params.getUriScheme();
+        if (!address.startsWith(scheme + ":")) {
+            builder.append(scheme).append(":").append(address);
+        } else {
+            builder.append(address);
+        }
+
+        boolean questionMarkHasBeenOutput = false;
+
+        if (amount != null) {
+            builder.append(QUESTION_MARK_SEPARATOR).append(FIELD_AMOUNT).append("=");
+            builder.append(amount.toPlainString());
+            questionMarkHasBeenOutput = true;
+        }
+
+        if (label != null && !"".equals(label)) {
+            if (questionMarkHasBeenOutput) {
+                builder.append(AMPERSAND_SEPARATOR);
+            } else {
+                builder.append(QUESTION_MARK_SEPARATOR);
+                questionMarkHasBeenOutput = true;
+            }
+            builder.append(FIELD_LABEL).append("=").append(encodeURLString(label));
+        }
+
+        if (message != null && !"".equals(message)) {
+            if (questionMarkHasBeenOutput) {
+                builder.append(AMPERSAND_SEPARATOR);
+            } else {
+                builder.append(QUESTION_MARK_SEPARATOR);
+            }
+            builder.append(FIELD_MESSAGE).append("=").append(encodeURLString(message));
+        }
+
+        return builder.toString();
+    }
+
+    /**
+     * Encode a string using URL encoding
+     *
+     * @param stringToEncode The string to URL encode
+     */
+    static String encodeURLString(String stringToEncode) {
+        try {
+            return java.net.URLEncoder.encode(stringToEncode, "UTF-8").replace("+", ENCODED_SPACE_CHARACTER);
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(e); // can't happen
+        }
+    }
+
+    /**
      * @param params              The network parameters or null
      * @param nameValuePairTokens The tokens representing the name value pairs (assumed to be
      *                            separated by '=' e.g. 'amount=0.2')
@@ -329,90 +414,5 @@ public class BitcoinURI {
         }
         builder.append("]");
         return builder.toString();
-    }
-
-    /**
-     * Simple Bitcoin URI builder using known good fields.
-     *
-     * @param address The Bitcoin address
-     * @param amount  The amount
-     * @param label   A label
-     * @param message A message
-     * @return A String containing the Bitcoin URI
-     */
-    public static String convertToBitcoinURI(Address address, Coin amount,
-                                             String label, String message) {
-        return convertToBitcoinURI(address.getParameters(), address.toString(), amount, label, message);
-    }
-
-    /**
-     * Simple Bitcoin URI builder using known good fields.
-     *
-     * @param params  The network parameters that determine which network the URI
-     *                is for.
-     * @param address The Bitcoin address
-     * @param amount  The amount
-     * @param label   A label
-     * @param message A message
-     * @return A String containing the Bitcoin URI
-     */
-    public static String convertToBitcoinURI(NetworkParameters params,
-                                             String address, @Nullable Coin amount,
-                                             @Nullable String label, @Nullable String message) {
-        checkNotNull(params);
-        checkNotNull(address);
-        if (amount != null && amount.signum() < 0) {
-            throw new IllegalArgumentException("Coin must be positive");
-        }
-
-        StringBuilder builder = new StringBuilder();
-        String scheme = params.getUriScheme();
-        if (!address.startsWith(scheme + ":")) {
-            builder.append(scheme).append(":").append(address);
-        } else {
-            builder.append(address);
-        }
-
-        boolean questionMarkHasBeenOutput = false;
-
-        if (amount != null) {
-            builder.append(QUESTION_MARK_SEPARATOR).append(FIELD_AMOUNT).append("=");
-            builder.append(amount.toPlainString());
-            questionMarkHasBeenOutput = true;
-        }
-
-        if (label != null && !"".equals(label)) {
-            if (questionMarkHasBeenOutput) {
-                builder.append(AMPERSAND_SEPARATOR);
-            } else {
-                builder.append(QUESTION_MARK_SEPARATOR);
-                questionMarkHasBeenOutput = true;
-            }
-            builder.append(FIELD_LABEL).append("=").append(encodeURLString(label));
-        }
-
-        if (message != null && !"".equals(message)) {
-            if (questionMarkHasBeenOutput) {
-                builder.append(AMPERSAND_SEPARATOR);
-            } else {
-                builder.append(QUESTION_MARK_SEPARATOR);
-            }
-            builder.append(FIELD_MESSAGE).append("=").append(encodeURLString(message));
-        }
-
-        return builder.toString();
-    }
-
-    /**
-     * Encode a string using URL encoding
-     *
-     * @param stringToEncode The string to URL encode
-     */
-    static String encodeURLString(String stringToEncode) {
-        try {
-            return java.net.URLEncoder.encode(stringToEncode, "UTF-8").replace("+", ENCODED_SPACE_CHARACTER);
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e); // can't happen
-        }
     }
 }

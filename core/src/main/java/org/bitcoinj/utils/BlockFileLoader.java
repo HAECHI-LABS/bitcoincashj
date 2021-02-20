@@ -47,6 +47,19 @@ import static com.google.common.base.Preconditions.checkArgument;
  * }</p>
  */
 public class BlockFileLoader implements Iterable<Block>, Iterator<Block> {
+    private Iterator<File> fileIt;
+    private File file = null;
+    private FileInputStream currentFileStream = null;
+    private Block nextBlock = null;
+    private NetworkParameters params;
+    public BlockFileLoader(NetworkParameters params, File blocksDir) {
+        this(params, getReferenceClientBlockFileList(blocksDir));
+    }
+    public BlockFileLoader(NetworkParameters params, List<File> files) {
+        fileIt = files.iterator();
+        this.params = params;
+    }
+
     /**
      * Gets the list of files which contain blocks from Bitcoin Core.
      */
@@ -71,21 +84,6 @@ public class BlockFileLoader implements Iterable<Block>, Iterator<Block> {
         if (!defaultBlocksDir.isDirectory())
             throw new RuntimeException("Default blocks directory not found");
         return defaultBlocksDir;
-    }
-
-    private Iterator<File> fileIt;
-    private File file = null;
-    private FileInputStream currentFileStream = null;
-    private Block nextBlock = null;
-    private NetworkParameters params;
-
-    public BlockFileLoader(NetworkParameters params, File blocksDir) {
-        this(params, getReferenceClientBlockFileList(blocksDir));
-    }
-
-    public BlockFileLoader(NetworkParameters params, List<File> files) {
-        fileIt = files.iterator();
-        this.params = params;
     }
 
     @Override

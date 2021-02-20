@@ -32,10 +32,6 @@ public class RuleCheckerFactory extends AbstractRuleCheckerFactory {
     private AbstractRuleCheckerFactory edaRulesFactory;
     private AbstractRuleCheckerFactory asertRulesFactory;
 
-    public static RuleCheckerFactory create(NetworkParameters parameters) {
-        return new RuleCheckerFactory(parameters);
-    }
-
     private RuleCheckerFactory(NetworkParameters parameters) {
         super(parameters);
         if (NetworkParameters.ID_REGTEST.equals(networkParameters.getId())) {
@@ -46,6 +42,10 @@ public class RuleCheckerFactory extends AbstractRuleCheckerFactory {
             this.daaRulesFactory = new DAARuleCheckerFactory(parameters);
             this.edaRulesFactory = new EDARuleCheckerFactory(parameters);
         }
+    }
+
+    public static RuleCheckerFactory create(NetworkParameters parameters) {
+        return new RuleCheckerFactory(parameters);
     }
 
     @Override

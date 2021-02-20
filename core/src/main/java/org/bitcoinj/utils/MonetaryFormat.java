@@ -82,7 +82,7 @@ public final class MonetaryFormat {
     public static final String SYMBOL_UBTC = "µ" + SYMBOL_BTC;
 
     public static final int MAX_DECIMALS = 8;
-
+    private static final String DECIMALS_PADDING = "0000000000000000"; // a few more than necessary for Bitcoin
     private final char negativeSign;
     private final char positiveSign;
     private final char zeroDigit;
@@ -95,7 +95,43 @@ public final class MonetaryFormat {
     private final char codeSeparator;
     private final boolean codePrefixed;
 
-    private static final String DECIMALS_PADDING = "0000000000000000"; // a few more than necessary for Bitcoin
+    public MonetaryFormat() {
+        this(false);
+    }
+
+    public MonetaryFormat(boolean useBitcoinSymbol) {
+        // defaults
+        this.negativeSign = '-';
+        this.positiveSign = 0; // none
+        this.zeroDigit = '0';
+        this.decimalMark = '.';
+        this.minDecimals = 2;
+        this.decimalGroups = null;
+        this.shift = 0;
+        this.roundingMode = RoundingMode.HALF_UP;
+        this.codes = new String[MAX_DECIMALS];
+        this.codes[0] = useBitcoinSymbol ? SYMBOL_BTC : CODE_BTC;
+        this.codes[3] = useBitcoinSymbol ? SYMBOL_MBTC : CODE_MBTC;
+        this.codes[6] = useBitcoinSymbol ? SYMBOL_UBTC : CODE_UBTC;
+        this.codeSeparator = ' ';
+        this.codePrefixed = true;
+    }
+
+    private MonetaryFormat(char negativeSign, char positiveSign, char zeroDigit, char decimalMark, int minDecimals,
+                           List<Integer> decimalGroups, int shift, RoundingMode roundingMode, String[] codes,
+                           char codeSeparator, boolean codePrefixed) {
+        this.negativeSign = negativeSign;
+        this.positiveSign = positiveSign;
+        this.zeroDigit = zeroDigit;
+        this.decimalMark = decimalMark;
+        this.minDecimals = minDecimals;
+        this.decimalGroups = decimalGroups;
+        this.shift = shift;
+        this.roundingMode = roundingMode;
+        this.codes = codes;
+        this.codeSeparator = codeSeparator;
+        this.codePrefixed = codePrefixed;
+    }
 
     /**
      * Set character to prefix negative values.
@@ -304,44 +340,6 @@ public final class MonetaryFormat {
         char decimalMark = dfs.getMonetaryDecimalSeparator();
         return new MonetaryFormat(negativeSign, positiveSign, zeroDigit, decimalMark, minDecimals, decimalGroups,
                 shift, roundingMode, codes, codeSeparator, codePrefixed);
-    }
-
-    public MonetaryFormat() {
-        this(false);
-    }
-
-    public MonetaryFormat(boolean useBitcoinSymbol) {
-        // defaults
-        this.negativeSign = '-';
-        this.positiveSign = 0; // none
-        this.zeroDigit = '0';
-        this.decimalMark = '.';
-        this.minDecimals = 2;
-        this.decimalGroups = null;
-        this.shift = 0;
-        this.roundingMode = RoundingMode.HALF_UP;
-        this.codes = new String[MAX_DECIMALS];
-        this.codes[0] = useBitcoinSymbol ? SYMBOL_BTC : CODE_BTC;
-        this.codes[3] = useBitcoinSymbol ? SYMBOL_MBTC : CODE_MBTC;
-        this.codes[6] = useBitcoinSymbol ? SYMBOL_UBTC : CODE_UBTC;
-        this.codeSeparator = ' ';
-        this.codePrefixed = true;
-    }
-
-    private MonetaryFormat(char negativeSign, char positiveSign, char zeroDigit, char decimalMark, int minDecimals,
-                           List<Integer> decimalGroups, int shift, RoundingMode roundingMode, String[] codes,
-                           char codeSeparator, boolean codePrefixed) {
-        this.negativeSign = negativeSign;
-        this.positiveSign = positiveSign;
-        this.zeroDigit = zeroDigit;
-        this.decimalMark = decimalMark;
-        this.minDecimals = minDecimals;
-        this.decimalGroups = decimalGroups;
-        this.shift = shift;
-        this.roundingMode = roundingMode;
-        this.codes = codes;
-        this.codeSeparator = codeSeparator;
-        this.codePrefixed = codePrefixed;
     }
 
     /**

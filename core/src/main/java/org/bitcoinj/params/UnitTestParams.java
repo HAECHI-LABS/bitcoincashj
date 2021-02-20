@@ -30,6 +30,7 @@ public class UnitTestParams extends AbstractBitcoinNetParams {
     public static final int UNITNET_MAJORITY_WINDOW = 8;
     public static final int TESTNET_MAJORITY_REJECT_BLOCK_OUTDATED = 6;
     public static final int TESTNET_MAJORITY_ENFORCE_BLOCK_UPGRADE = 4;
+    private static UnitTestParams instance;
 
     public UnitTestParams() {
         super();
@@ -70,8 +71,6 @@ public class UnitTestParams extends AbstractBitcoinNetParams {
         maxBlockSize = 32 * 1000 * 1000;
         maxBlockSigops = maxBlockSize / 50;
     }
-
-    private static UnitTestParams instance;
 
     public static synchronized UnitTestParams get() {
         if (instance == null) {

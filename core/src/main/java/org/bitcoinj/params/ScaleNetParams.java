@@ -34,6 +34,9 @@ public class ScaleNetParams extends AbstractBitcoinNetParams {
     public static final int TESTNET_MAJORITY_WINDOW = 100;
     public static final int TESTNET_MAJORITY_REJECT_BLOCK_OUTDATED = 75;
     public static final int TESTNET_MAJORITY_ENFORCE_BLOCK_UPGRADE = 51;
+    // February 16th 2012
+    private static final Date testnetDiffDate = new Date(1329264000000L);
+    private static ScaleNetParams instance;
 
     public ScaleNetParams() {
         super();
@@ -91,8 +94,6 @@ public class ScaleNetParams extends AbstractBitcoinNetParams {
 
     }
 
-    private static ScaleNetParams instance;
-
     public static synchronized ScaleNetParams get() {
         if (instance == null) {
             instance = new ScaleNetParams();
@@ -100,15 +101,12 @@ public class ScaleNetParams extends AbstractBitcoinNetParams {
         return instance;
     }
 
+    public static boolean isValidTestnetDateBlock(Block block) {
+        return block.getTime().after(testnetDiffDate);
+    }
+
     @Override
     public String getPaymentProtocolId() {
         return PAYMENT_PROTOCOL_ID_SCALENET;
-    }
-
-    // February 16th 2012
-    private static final Date testnetDiffDate = new Date(1329264000000L);
-
-    public static boolean isValidTestnetDateBlock(Block block) {
-        return block.getTime().after(testnetDiffDate);
     }
 }

@@ -47,28 +47,12 @@ import javax.annotation.Nullable;
 public class NotificationBarPane extends BorderPane {
     public static final Duration ANIM_IN_DURATION = GuiUtils.UI_ANIMATION_TIME.multiply(2);
     public static final Duration ANIM_OUT_DURATION = GuiUtils.UI_ANIMATION_TIME;
-
+    public final ObservableList<Item> items;
     private HBox bar;
     private Label label;
     private double barHeight;
     private ProgressBar progressBar;
-
-    public class Item {
-        public final SimpleStringProperty label;
-        @Nullable
-        public final ObservableDoubleValue progress;
-
-        public Item(String label, @Nullable ObservableDoubleValue progress) {
-            this.label = new SimpleStringProperty(label);
-            this.progress = progress;
-        }
-
-        public void cancel() {
-            items.remove(this);
-        }
-    }
-
-    public final ObservableList<Item> items;
+    private Timeline timeline;
 
     public NotificationBarPane(Node content) {
         super(content);
@@ -129,8 +113,6 @@ public class NotificationBarPane extends BorderPane {
         animate(0.0);
     }
 
-    private Timeline timeline;
-
     protected void animate(Number target) {
         if (timeline != null) {
             timeline.stop();
@@ -155,5 +137,20 @@ public class NotificationBarPane extends BorderPane {
         Item i = new Item(string, progress);
         items.add(i);
         return i;
+    }
+
+    public class Item {
+        public final SimpleStringProperty label;
+        @Nullable
+        public final ObservableDoubleValue progress;
+
+        public Item(String label, @Nullable ObservableDoubleValue progress) {
+            this.label = new SimpleStringProperty(label);
+            this.progress = progress;
+        }
+
+        public void cancel() {
+            items.remove(this);
+        }
     }
 }

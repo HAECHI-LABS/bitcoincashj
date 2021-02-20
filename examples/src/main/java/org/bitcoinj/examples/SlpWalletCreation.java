@@ -17,14 +17,10 @@
 package org.bitcoinj.examples;
 
 import org.bitcoinj.core.NetworkParameters;
-import org.bitcoinj.crypto.DeterministicKey;
-import org.bitcoinj.kits.MultisigAppKit;
 import org.bitcoinj.kits.SlpAppKit;
 import org.bitcoinj.params.MainNetParams;
-import org.bitcoinj.wallet.DeterministicKeyChain;
 
 import java.io.File;
-import java.util.ArrayList;
 
 /**
  * The following example shows how to use the by bitcoinj provided WalletAppKit.

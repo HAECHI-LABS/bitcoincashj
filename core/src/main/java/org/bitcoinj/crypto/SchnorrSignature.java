@@ -1,7 +1,9 @@
 package org.bitcoinj.crypto;
 
 import com.google.common.base.Preconditions;
-import org.bitcoinj.core.*;
+import org.bitcoinj.core.Transaction;
+import org.bitcoinj.core.Utils;
+import org.bitcoinj.core.VerificationException;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
@@ -31,9 +33,8 @@ public class SchnorrSignature {
     public static final BigInteger THREE = BigInteger.valueOf(3);
 
     private final static char[] hexArray = "0123456789ABCDEF".toCharArray();
-
-    private byte[] signature;
     public int sighashFlags;
+    private byte[] signature;
 
     public SchnorrSignature(byte[] signature, Transaction.SigHash mode, boolean anyoneCanPay, boolean useForkId) {
         this.signature = signature;
@@ -234,6 +235,11 @@ public class SchnorrSignature {
         return sighashFlags;
     }
 
+    public static SchnorrSignature decodeFromBitcoin(byte[] bytes) throws VerificationException {
+        byte[] signature = Arrays.copyOf(bytes, bytes.length - 1);
+        return new SchnorrSignature(signature, bytes[bytes.length - 1]);
+    }
+
     public byte[] getSignature() {
         return this.signature;
     }
@@ -261,10 +267,5 @@ public class SchnorrSignature {
         bos.write(this.getSignature(), 0, this.getSignature().length);
         bos.write(sighashFlags);
         return bos.toByteArray();
-    }
-
-    public static SchnorrSignature decodeFromBitcoin(byte[] bytes) throws VerificationException {
-        byte[] signature = Arrays.copyOf(bytes, bytes.length-1);
-        return new SchnorrSignature(signature, bytes[bytes.length-1]);
     }
 }

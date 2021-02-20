@@ -45,8 +45,9 @@ import static wallettemplate.utils.GuiUtils.*;
  * progress meter as we scrypt the password.
  */
 public class WalletPasswordController {
+    public static final String TAG = WalletPasswordController.class.getName() + ".target-time";
     private static final Logger log = LoggerFactory.getLogger(WalletPasswordController.class);
-
+    public Main.OverlayUI overlayUI;
     @FXML
     HBox buttonsBox;
     @FXML
@@ -59,15 +60,25 @@ public class WalletPasswordController {
     GridPane widgetGrid;
     @FXML
     Label explanationLabel;
-
-    public Main.OverlayUI overlayUI;
-
     private SimpleObjectProperty<KeyParameter> aesKey = new SimpleObjectProperty<>();
+
+    // Reads target time or throws if not set yet (should never happen).
+    public static Duration getTargetTime() throws IllegalArgumentException {
+        return Duration.ofMillis(Longs.fromByteArray(Main.bitcoin.wallet().getTag(TAG).toByteArray()));
+    }
+
+    // Writes the given time to the wallet as a tag so we can find it again in this class.
+    public static void setTargetTime(Duration targetTime) {
+        ByteString bytes = ByteString.copyFrom(Longs.toByteArray(targetTime.toMillis()));
+        Main.bitcoin.wallet().setTag(TAG, bytes);
+    }
 
     public void initialize() {
         progressMeter.setOpacity(0);
         Platform.runLater(pass1::requestFocus);
     }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     @FXML
     void confirmClicked(ActionEvent event) {
@@ -111,20 +122,5 @@ public class WalletPasswordController {
 
     public ReadOnlyObjectProperty<KeyParameter> aesKeyProperty() {
         return aesKey;
-    }
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    public static final String TAG = WalletPasswordController.class.getName() + ".target-time";
-
-    // Writes the given time to the wallet as a tag so we can find it again in this class.
-    public static void setTargetTime(Duration targetTime) {
-        ByteString bytes = ByteString.copyFrom(Longs.toByteArray(targetTime.toMillis()));
-        Main.bitcoin.wallet().setTag(TAG, bytes);
-    }
-
-    // Reads target time or throws if not set yet (should never happen).
-    public static Duration getTargetTime() throws IllegalArgumentException {
-        return Duration.ofMillis(Longs.fromByteArray(Main.bitcoin.wallet().getTag(TAG).toByteArray()));
     }
 }

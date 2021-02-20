@@ -139,6 +139,10 @@ public class BIP47AppKit extends WalletKitCore {
         this.filePrefix = checkNotNull(filePrefix);
     }
 
+    private static Coin getDefaultFee(NetworkParameters params) {
+        return Transaction.DEFAULT_TX_FEE;
+    }
+
     @Override
     protected void startUp() throws Exception {
         super.startUp();
@@ -473,7 +477,7 @@ public class BIP47AppKit extends WalletKitCore {
                 String cashAddress = address.toCash().toString();
                 String notifCashAddress = getAccount(0).getNotificationAddress().toCash().toString();
                 if (isMineOrWatched) {
-                    if(cashAddress.equals(notifCashAddress)) {
+                    if (cashAddress.equals(notifCashAddress)) {
                         return address;
                     }
                 }
@@ -691,10 +695,6 @@ public class BIP47AppKit extends WalletKitCore {
         return getAccount(0).getStringPaymentCode();
     }
 
-    private static Coin getDefaultFee(NetworkParameters params) {
-        return Transaction.DEFAULT_TX_FEE;
-    }
-
     public Transaction createSend(Address address, long amount) throws InsufficientMoneyException {
         SendRequest sendRequest = SendRequest.to(this.params(), address.toString(), Coin.valueOf(amount));
 
@@ -717,7 +717,7 @@ public class BIP47AppKit extends WalletKitCore {
 
         org.bitcoinj.utils.BIP47Util.FeeCalculation feeCalculation = BIP47Util.calculateFee(vWallet, sendRequest, ntValue, vWallet.calculateAllSpendCandidates());
 
-        for (TransactionOutput output :feeCalculation.bestCoinSelection.gathered) {
+        for (TransactionOutput output : feeCalculation.bestCoinSelection.gathered) {
             sendRequest.tx.addInput(output);
         }
 

@@ -38,12 +38,9 @@ import static com.google.common.base.Preconditions.checkState;
  * <p>Instances of this class are not safe for use by multiple threads.</p>
  */
 public abstract class Message {
-    private static final Logger log = LoggerFactory.getLogger(Message.class);
-
     public static final int MAX_SIZE = 0x02000000; // 32MB
-
     public static final int UNKNOWN_LENGTH = Integer.MIN_VALUE;
-
+    private static final Logger log = LoggerFactory.getLogger(Message.class);
     // Useful to ensure serialize/deserialize are consistent with each other.
     private static final boolean SELF_CHECK = false;
 
@@ -107,6 +104,15 @@ public abstract class Message {
             this.payload = null;
     }
 
+    protected Message(NetworkParameters params, byte[] payload, int offset) throws ProtocolException {
+        this(params, payload, offset, params.getDefaultSerializer().getProtocolVersion(),
+                params.getDefaultSerializer(), UNKNOWN_LENGTH);
+    }
+
+    protected Message(NetworkParameters params, byte[] payload, int offset, MessageSerializer serializer, int length) throws ProtocolException {
+        this(params, payload, offset, serializer.getProtocolVersion(), serializer, length);
+    }
+
     private void selfCheck(byte[] payload, int offset) {
         if (!(this instanceof VersionMessage)) {
             byte[] payloadBytes = new byte[cursor - offset];
@@ -117,15 +123,6 @@ public abstract class Message {
                         Utils.HEX.encode(reserialized) + " vs \n" +
                         Utils.HEX.encode(payloadBytes));
         }
-    }
-
-    protected Message(NetworkParameters params, byte[] payload, int offset) throws ProtocolException {
-        this(params, payload, offset, params.getDefaultSerializer().getProtocolVersion(),
-                params.getDefaultSerializer(), UNKNOWN_LENGTH);
-    }
-
-    protected Message(NetworkParameters params, byte[] payload, int offset, MessageSerializer serializer, int length) throws ProtocolException {
-        this(params, payload, offset, serializer.getProtocolVersion(), serializer, length);
     }
 
     // These methods handle the serialization/deserialization using the custom Bitcoin protocol.

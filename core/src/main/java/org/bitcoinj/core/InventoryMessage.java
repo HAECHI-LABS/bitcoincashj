@@ -56,14 +56,6 @@ public class InventoryMessage extends ListMessage {
         super(params);
     }
 
-    public void addBlock(Block block) {
-        addItem(new InventoryItem(InventoryItem.Type.BLOCK, block.getHash()));
-    }
-
-    public void addTransaction(Transaction tx) {
-        addItem(new InventoryItem(InventoryItem.Type.TRANSACTION, tx.getTxId()));
-    }
-
     /**
      * Creates a new inv message for the given transactions.
      */
@@ -73,5 +65,13 @@ public class InventoryMessage extends ListMessage {
         for (Transaction tx : txns)
             result.addTransaction(tx);
         return result;
+    }
+
+    public void addBlock(Block block) {
+        addItem(new InventoryItem(InventoryItem.Type.BLOCK, block.getHash()));
+    }
+
+    public void addTransaction(Transaction tx) {
+        addItem(new InventoryItem(InventoryItem.Type.TRANSACTION, tx.getTxId()));
     }
 }

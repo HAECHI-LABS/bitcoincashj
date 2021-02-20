@@ -148,6 +148,42 @@ public class VersionMessage extends Message {
                 + VarInt.sizeOf(subVer.length()) + subVer.length() + 4 + 1;
     }
 
+    private static void checkSubVerComponent(String component) {
+        if (component.contains("/") || component.contains("(") || component.contains(")"))
+            throw new IllegalArgumentException("name contains invalid characters");
+    }
+
+    public static String toStringServices(long services) {
+        List<String> strings = new LinkedList<>();
+        if ((services & NODE_NETWORK) == NODE_NETWORK) {
+            strings.add("NETWORK");
+            services &= ~NODE_NETWORK;
+        }
+        if ((services & NODE_GETUTXOS) == NODE_GETUTXOS) {
+            strings.add("GETUTXOS");
+            services &= ~NODE_GETUTXOS;
+        }
+        if ((services & NODE_BLOOM) == NODE_BLOOM) {
+            strings.add("BLOOM");
+            services &= ~NODE_BLOOM;
+        }
+        if ((services & NODE_NETWORK_LIMITED) == NODE_NETWORK_LIMITED) {
+            strings.add("NETWORK_LIMITED");
+            services &= ~NODE_NETWORK_LIMITED;
+        }
+        if ((services & NODE_GRAPHENE) == NODE_GRAPHENE) {
+            strings.add("GRAPHENE");
+            services &= ~NODE_GRAPHENE;
+        }
+        if ((services & NODE_XTHIN) == NODE_XTHIN) {
+            strings.add("XTHIN");
+            services &= ~NODE_XTHIN;
+        }
+        if (services != 0)
+            strings.add("remaining: " + Long.toBinaryString(services));
+        return Joiner.on(", ").join(strings);
+    }
+
     @Override
     protected void parse() throws ProtocolException {
         clientVersion = (int) readUint32();
@@ -290,11 +326,6 @@ public class VersionMessage extends Message {
         }
     }
 
-    private static void checkSubVerComponent(String component) {
-        if (component.contains("/") || component.contains("(") || component.contains(")"))
-            throw new IllegalArgumentException("name contains invalid characters");
-    }
-
     /**
      * Returns true if the clientVersion field is {@link NetworkParameters.ProtocolVersion#PONG} or higher.
      * If it is then {@link Peer#ping()} is usable.
@@ -334,36 +365,5 @@ public class VersionMessage extends Message {
      */
     public boolean hasLimitedBlockChain() {
         return hasBlockChain() || (localServices & NODE_NETWORK_LIMITED) == NODE_NETWORK_LIMITED;
-    }
-
-    public static String toStringServices(long services) {
-        List<String> strings = new LinkedList<>();
-        if ((services & NODE_NETWORK) == NODE_NETWORK) {
-            strings.add("NETWORK");
-            services &= ~NODE_NETWORK;
-        }
-        if ((services & NODE_GETUTXOS) == NODE_GETUTXOS) {
-            strings.add("GETUTXOS");
-            services &= ~NODE_GETUTXOS;
-        }
-        if ((services & NODE_BLOOM) == NODE_BLOOM) {
-            strings.add("BLOOM");
-            services &= ~NODE_BLOOM;
-        }
-        if ((services & NODE_NETWORK_LIMITED) == NODE_NETWORK_LIMITED) {
-            strings.add("NETWORK_LIMITED");
-            services &= ~NODE_NETWORK_LIMITED;
-        }
-        if ((services & NODE_GRAPHENE) == NODE_GRAPHENE) {
-            strings.add("GRAPHENE");
-            services &= ~NODE_GRAPHENE;
-        }
-        if ((services & NODE_XTHIN) == NODE_XTHIN) {
-            strings.add("XTHIN");
-            services &= ~NODE_XTHIN;
-        }
-        if (services != 0)
-            strings.add("remaining: " + Long.toBinaryString(services));
-        return Joiner.on(", ").join(strings);
     }
 }

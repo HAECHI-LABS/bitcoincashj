@@ -49,7 +49,7 @@ import static wallettemplate.utils.WTUtils.unchecked;
 
 public class WalletSettingsController {
     private static final Logger log = LoggerFactory.getLogger(WalletSettingsController.class);
-
+    public Main.OverlayUI overlayUI;
     @FXML
     Button passwordButton;
     @FXML
@@ -58,9 +58,6 @@ public class WalletSettingsController {
     TextArea wordsArea;
     @FXML
     Button restoreButton;
-
-    public Main.OverlayUI overlayUI;
-
     private KeyParameter aesKey;
 
     // Note: NOT called by FXMLLoader!

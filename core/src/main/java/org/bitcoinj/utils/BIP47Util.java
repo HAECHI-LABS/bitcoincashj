@@ -42,11 +42,6 @@ public class BIP47Util {
     private static final String TAG = "BIP47Util";
     private static final Logger log = LoggerFactory.getLogger(BIP47Util.class);
 
-    public static class FeeCalculation {
-        public CoinSelection bestCoinSelection;
-        public TransactionOutput bestChangeOutput;
-    }
-
     public static FeeCalculation calculateFee(org.bitcoinj.wallet.Wallet vWallet, SendRequest req, Coin value, List<TransactionOutput> candidates) throws InsufficientMoneyException {
         CoinSelector selector = vWallet.getCoinSelector();
         // There are 3 possibilities for what adding change might do:
@@ -190,7 +185,7 @@ public class BIP47Util {
 
         if (selection3 == null && selection2 == null && selection1 == null) {
             checkNotNull(valueMissing);
-            log.warn("Insufficient value in wallet for send: needed "+valueMissing.toFriendlyString()+" more");
+            log.warn("Insufficient value in wallet for send: needed " + valueMissing.toFriendlyString() + " more");
             throw new InsufficientMoneyException(valueMissing);
         }
 
@@ -422,5 +417,10 @@ public class BIP47Util {
      */
     private static BIP47PaymentAddress getPaymentAddress(NetworkParameters networkParameters, BIP47PaymentCode pcode, int idx, ECKey key) throws AddressFormatException, NotSecp256k1Exception {
         return new BIP47PaymentAddress(networkParameters, pcode, idx, key.getPrivKeyBytes());
+    }
+
+    public static class FeeCalculation {
+        public CoinSelection bestCoinSelection;
+        public TransactionOutput bestChangeOutput;
     }
 }

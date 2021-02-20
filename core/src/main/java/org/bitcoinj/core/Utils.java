@@ -17,6 +17,13 @@
 
 package org.bitcoinj.core;
 
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import com.google.common.io.BaseEncoding;
+import org.bouncycastle.crypto.digests.RIPEMD160Digest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -26,16 +33,7 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.regex.Pattern;
 
-import org.bouncycastle.crypto.digests.RIPEMD160Digest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.google.common.base.Joiner;
-import com.google.common.base.Splitter;
-import com.google.common.io.BaseEncoding;
-
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 
 /**
  * A collection of various utility methods that are helpful for working with the Bitcoin protocol.
@@ -43,11 +41,17 @@ import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterrup
  */
 public class Utils {
 
-    /** Joiner for concatenating words with a space inbetween. */
+    /**
+     * Joiner for concatenating words with a space inbetween.
+     */
     public static final Joiner SPACE_JOINER = Joiner.on(" ");
-    /** Splitter for splitting words on whitespaces. */
+    /**
+     * Splitter for splitting words on whitespaces.
+     */
     public static final Splitter WHITESPACE_SPLITTER = Splitter.on(Pattern.compile("\\s+"));
-    /** Hex encoding used throughout the framework. Use with HEX.encode(byte[]) or HEX.decode(CharSequence). */
+    /**
+     * Hex encoding used throughout the framework. Use with HEX.encode(byte[]) or HEX.decode(CharSequence).
+     */
     public static final BaseEncoding HEX = BaseEncoding.base16().lowerCase();
     // zero length arrays are immutable so we can save some object allocation by reusing the same instance.
     public static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
@@ -59,6 +63,41 @@ public class Utils {
     public static final int MAX_INITIAL_ARRAY_LENGTH = 20;
 
     private static final Logger log = LoggerFactory.getLogger(Utils.class);
+    private static final TimeZone UTC = TimeZone.getTimeZone("UTC");
+    // 00000001, 00000010, 00000100, 00001000, ...
+    private static final int[] bitMask = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
+    /**
+     * If non-null, overrides the return value of now().
+     */
+    private static volatile Date mockTime;
+    private static Runtime runtime = null;
+    private static OS os = null;
+
+    static {
+        String runtimeProp = System.getProperty("java.runtime.name", "").toLowerCase(Locale.US);
+        if (runtimeProp.equals(""))
+            runtime = null;
+        else if (runtimeProp.contains("android"))
+            runtime = Runtime.ANDROID;
+        else if (runtimeProp.contains("openjdk"))
+            runtime = Runtime.OPENJDK;
+        else if (runtimeProp.contains("java(tm) se"))
+            runtime = Runtime.ORACLE_JAVA;
+        else
+            log.info("Unknown java.runtime.name '{}'", runtimeProp);
+
+        String osProp = System.getProperty("os.name", "").toLowerCase(Locale.US);
+        if (osProp.equals(""))
+            os = null;
+        else if (osProp.contains("linux"))
+            os = OS.LINUX;
+        else if (osProp.contains("win"))
+            os = OS.WINDOWS;
+        else if (osProp.contains("mac"))
+            os = OS.MAC_OS;
+        else
+            log.info("Unknown os.name '{}'", runtimeProp);
+    }
 
     /**
      * <p>
@@ -73,7 +112,8 @@ public class Utils {
      * Otherwise the representation is not minimal.
      * For example, if the sign bit is 0000_00<b>0</b>0, then the representation is not minimal due to the rightmost zero.
      * </p>
-     * @param b the integer to format into a byte array
+     *
+     * @param b        the integer to format into a byte array
      * @param numBytes the desired size of the resulting byte array
      * @return numBytes byte long array.
      */
@@ -91,13 +131,17 @@ public class Utils {
         return dest;
     }
 
-    /** Write 2 bytes to the byte array (starting at the offset) as unsigned 16-bit integer in little endian format. */
+    /**
+     * Write 2 bytes to the byte array (starting at the offset) as unsigned 16-bit integer in little endian format.
+     */
     public static void uint16ToByteArrayLE(int val, byte[] out, int offset) {
         out[offset] = (byte) (0xFF & val);
         out[offset + 1] = (byte) (0xFF & (val >> 8));
     }
 
-    /** Write 4 bytes to the byte array (starting at the offset) as unsigned 32-bit integer in little endian format. */
+    /**
+     * Write 4 bytes to the byte array (starting at the offset) as unsigned 32-bit integer in little endian format.
+     */
     public static void uint32ToByteArrayLE(long val, byte[] out, int offset) {
         out[offset] = (byte) (0xFF & val);
         out[offset + 1] = (byte) (0xFF & (val >> 8));
@@ -105,7 +149,9 @@ public class Utils {
         out[offset + 3] = (byte) (0xFF & (val >> 24));
     }
 
-    /** Write 4 bytes to the byte array (starting at the offset) as unsigned 32-bit integer in big endian format. */
+    /**
+     * Write 4 bytes to the byte array (starting at the offset) as unsigned 32-bit integer in big endian format.
+     */
     public static void uint32ToByteArrayBE(long val, byte[] out, int offset) {
         out[offset] = (byte) (0xFF & (val >> 24));
         out[offset + 1] = (byte) (0xFF & (val >> 16));
@@ -113,7 +159,9 @@ public class Utils {
         out[offset + 3] = (byte) (0xFF & val);
     }
 
-    /** Write 8 bytes to the byte array (starting at the offset) as signed 64-bit integer in little endian format. */
+    /**
+     * Write 8 bytes to the byte array (starting at the offset) as signed 64-bit integer in little endian format.
+     */
     public static void int64ToByteArrayLE(long val, byte[] out, int offset) {
         out[offset] = (byte) (0xFF & val);
         out[offset + 1] = (byte) (0xFF & (val >> 8));
@@ -125,19 +173,25 @@ public class Utils {
         out[offset + 7] = (byte) (0xFF & (val >> 56));
     }
 
-    /** Write 2 bytes to the output stream as unsigned 16-bit integer in little endian format. */
+    /**
+     * Write 2 bytes to the output stream as unsigned 16-bit integer in little endian format.
+     */
     public static void uint16ToByteStreamLE(int val, OutputStream stream) throws IOException {
         stream.write((int) (0xFF & val));
         stream.write((int) (0xFF & (val >> 8)));
     }
 
-    /** Write 2 bytes to the output stream as unsigned 16-bit integer in big endian format. */
+    /**
+     * Write 2 bytes to the output stream as unsigned 16-bit integer in big endian format.
+     */
     public static void uint16ToByteStreamBE(int val, OutputStream stream) throws IOException {
         stream.write((int) (0xFF & (val >> 8)));
         stream.write((int) (0xFF & val));
     }
 
-    /** Write 4 bytes to the output stream as unsigned 32-bit integer in little endian format. */
+    /**
+     * Write 4 bytes to the output stream as unsigned 32-bit integer in little endian format.
+     */
     public static void uint32ToByteStreamLE(long val, OutputStream stream) throws IOException {
         stream.write((int) (0xFF & val));
         stream.write((int) (0xFF & (val >> 8)));
@@ -145,7 +199,9 @@ public class Utils {
         stream.write((int) (0xFF & (val >> 24)));
     }
 
-    /** Write 4 bytes to the output stream as unsigned 32-bit integer in big endian format. */
+    /**
+     * Write 4 bytes to the output stream as unsigned 32-bit integer in big endian format.
+     */
     public static void uint32ToByteStreamBE(long val, OutputStream stream) throws IOException {
         stream.write((int) (0xFF & (val >> 24)));
         stream.write((int) (0xFF & (val >> 16)));
@@ -153,7 +209,9 @@ public class Utils {
         stream.write((int) (0xFF & val));
     }
 
-    /** Write 8 bytes to the output stream as signed 64-bit integer in little endian format. */
+    /**
+     * Write 8 bytes to the output stream as signed 64-bit integer in little endian format.
+     */
     public static void int64ToByteStreamLE(long val, OutputStream stream) throws IOException {
         stream.write((int) (0xFF & val));
         stream.write((int) (0xFF & (val >> 8)));
@@ -165,7 +223,9 @@ public class Utils {
         stream.write((int) (0xFF & (val >> 56)));
     }
 
-    /** Write 8 bytes to the output stream as unsigned 64-bit integer in little endian format. */
+    /**
+     * Write 8 bytes to the output stream as unsigned 64-bit integer in little endian format.
+     */
     public static void uint64ToByteStreamLE(BigInteger val, OutputStream stream) throws IOException {
         byte[] bytes = val.toByteArray();
         if (bytes.length > 8) {
@@ -179,13 +239,17 @@ public class Utils {
         }
     }
 
-    /** Parse 2 bytes from the byte array (starting at the offset) as unsigned 16-bit integer in little endian format. */
+    /**
+     * Parse 2 bytes from the byte array (starting at the offset) as unsigned 16-bit integer in little endian format.
+     */
     public static int readUint16(byte[] bytes, int offset) {
         return (bytes[offset] & 0xff) |
                 ((bytes[offset + 1] & 0xff) << 8);
     }
 
-    /** Parse 4 bytes from the byte array (starting at the offset) as unsigned 32-bit integer in little endian format. */
+    /**
+     * Parse 4 bytes from the byte array (starting at the offset) as unsigned 32-bit integer in little endian format.
+     */
     public static long readUint32(byte[] bytes, int offset) {
         return (bytes[offset] & 0xffl) |
                 ((bytes[offset + 1] & 0xffl) << 8) |
@@ -193,7 +257,9 @@ public class Utils {
                 ((bytes[offset + 3] & 0xffl) << 24);
     }
 
-    /** Parse 8 bytes from the byte array (starting at the offset) as signed 64-bit integer in little endian format. */
+    /**
+     * Parse 8 bytes from the byte array (starting at the offset) as signed 64-bit integer in little endian format.
+     */
     public static long readInt64(byte[] bytes, int offset) {
         return (bytes[offset] & 0xffl) |
                 ((bytes[offset + 1] & 0xffl) << 8) |
@@ -205,7 +271,9 @@ public class Utils {
                 ((bytes[offset + 7] & 0xffl) << 56);
     }
 
-    /** Parse 4 bytes from the byte array (starting at the offset) as unsigned 32-bit integer in big endian format. */
+    /**
+     * Parse 4 bytes from the byte array (starting at the offset) as unsigned 32-bit integer in big endian format.
+     */
     public static long readUint32BE(byte[] bytes, int offset) {
         return ((bytes[offset] & 0xffl) << 24) |
                 ((bytes[offset + 1] & 0xffl) << 16) |
@@ -213,13 +281,17 @@ public class Utils {
                 (bytes[offset + 3] & 0xffl);
     }
 
-    /** Parse 2 bytes from the byte array (starting at the offset) as unsigned 16-bit integer in big endian format. */
+    /**
+     * Parse 2 bytes from the byte array (starting at the offset) as unsigned 16-bit integer in big endian format.
+     */
     public static int readUint16BE(byte[] bytes, int offset) {
         return ((bytes[offset] & 0xff) << 8) |
                 (bytes[offset + 1] & 0xff);
     }
 
-    /** Parse 2 bytes from the stream as unsigned 16-bit integer in little endian format. */
+    /**
+     * Parse 2 bytes from the stream as unsigned 16-bit integer in little endian format.
+     */
     public static int readUint16FromStream(InputStream is) {
         try {
             return (is.read() & 0xff) |
@@ -229,7 +301,9 @@ public class Utils {
         }
     }
 
-    /** Parse 4 bytes from the stream as unsigned 32-bit integer in little endian format. */
+    /**
+     * Parse 4 bytes from the stream as unsigned 32-bit integer in little endian format.
+     */
     public static long readUint32FromStream(InputStream is) {
         try {
             return (is.read() & 0xffl) |
@@ -269,6 +343,7 @@ public class Utils {
      * MPI encoded numbers are produced by the OpenSSL BN_bn2mpi function. They consist of
      * a 4 byte big endian length field, followed by the stated number of bytes representing
      * the number in big endian format (with a sign bit).
+     *
      * @param hasLength can be set to false if the given array is missing the 4 byte length field
      */
     public static BigInteger decodeMPI(byte[] mpi, boolean hasLength) {
@@ -292,14 +367,15 @@ public class Utils {
      * MPI encoded numbers are produced by the OpenSSL BN_bn2mpi function. They consist of
      * a 4 byte big endian length field, followed by the stated number of bytes representing
      * the number in big endian format (with a sign bit).
+     *
      * @param includeLength indicates whether the 4 byte length field should be included
      */
     public static byte[] encodeMPI(BigInteger value, boolean includeLength) {
         if (value.equals(BigInteger.ZERO)) {
             if (!includeLength)
-                return new byte[] {};
+                return new byte[]{};
             else
-                return new byte[] {0x00, 0x00, 0x00, 0x00};
+                return new byte[]{0x00, 0x00, 0x00, 0x00};
         }
         boolean isNegative = value.signum() < 0;
         if (isNegative)
@@ -320,7 +396,7 @@ public class Utils {
             if (length != array.length) {
                 result = new byte[length];
                 System.arraycopy(array, 0, result, 1, array.length);
-            }else
+            } else
                 result = array;
             if (isNegative)
                 result[0] |= 0x80;
@@ -371,11 +447,6 @@ public class Utils {
         result |= value.signum() == -1 ? 0x00800000 : 0;
         return result;
     }
-
-    /**
-     * If non-null, overrides the return value of now().
-     */
-    private static volatile Date mockTime;
 
     /**
      * Advances (or rewinds) the mock clock by the given number of seconds.
@@ -436,10 +507,9 @@ public class Utils {
         return currentTimeMillis() / 1000;
     }
 
-    private static final TimeZone UTC = TimeZone.getTimeZone("UTC");
-
     /**
      * Formats a given date+time value to an ISO 8601 string.
+     *
      * @param dateTime value to format, as a Date
      */
     public static String dateTimeFormat(Date dateTime) {
@@ -450,6 +520,7 @@ public class Utils {
 
     /**
      * Formats a given date+time value to an ISO 8601 string.
+     *
      * @param dateTime value to format, unix time (ms)
      */
     public static String dateTimeFormat(long dateTime) {
@@ -458,53 +529,18 @@ public class Utils {
         return iso8601.format(dateTime);
     }
 
-    // 00000001, 00000010, 00000100, 00001000, ...
-    private static final int[] bitMask = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
-
-    /** Checks if the given bit is set in data, using little endian (not the same as Java native big endian) */
+    /**
+     * Checks if the given bit is set in data, using little endian (not the same as Java native big endian)
+     */
     public static boolean checkBitLE(byte[] data, int index) {
         return (data[index >>> 3] & bitMask[7 & index]) != 0;
     }
 
-    /** Sets the given bit in data to one, using little endian (not the same as Java native big endian) */
+    /**
+     * Sets the given bit in data to one, using little endian (not the same as Java native big endian)
+     */
     public static void setBitLE(byte[] data, int index) {
         data[index >>> 3] |= bitMask[7 & index];
-    }
-
-    private enum Runtime {
-        ANDROID, OPENJDK, ORACLE_JAVA
-    }
-
-    private enum OS {
-        LINUX, WINDOWS, MAC_OS
-    }
-
-    private static Runtime runtime = null;
-    private static OS os = null;
-    static {
-        String runtimeProp = System.getProperty("java.runtime.name", "").toLowerCase(Locale.US);
-        if (runtimeProp.equals(""))
-            runtime = null;
-        else if (runtimeProp.contains("android"))
-            runtime = Runtime.ANDROID;
-        else if (runtimeProp.contains("openjdk"))
-            runtime = Runtime.OPENJDK;
-        else if (runtimeProp.contains("java(tm) se"))
-            runtime = Runtime.ORACLE_JAVA;
-        else
-            log.info("Unknown java.runtime.name '{}'", runtimeProp);
-
-        String osProp = System.getProperty("os.name", "").toLowerCase(Locale.US);
-        if (osProp.equals(""))
-            os = null;
-        else if (osProp.contains("linux"))
-            os = OS.LINUX;
-        else if (osProp.contains("win"))
-            os = OS.WINDOWS;
-        else if (osProp.contains("mac"))
-            os = OS.MAC_OS;
-        else
-            log.info("Unknown os.name '{}'", runtimeProp);
     }
 
     public static boolean isAndroidRuntime() {
@@ -541,9 +577,9 @@ public class Utils {
     /**
      * Returns a minimally encoded encoded version of the data. That is, a version will pass the check
      * in checkMinimallyEncodedLE(byte[] bytesLE).
-     *
+     * <p>
      * If the data is already minimally encoded the original byte array will be returned.
-     *
+     * <p>
      * inspired by: https://reviews.bitcoinabc.org/D1219
      *
      * @param dataLE
@@ -602,6 +638,7 @@ public class Utils {
      * checks that LE encoded number is minimally represented.  That is that there are no leading zero bytes except in
      * the case: if there's more than one byte and the most significant bit of the second-most-significant-byte is set it
      * would conflict with the sign bit.
+     *
      * @param bytesLE
      * @return
      */
@@ -631,5 +668,13 @@ public class Utils {
         }
 
         return true;
+    }
+
+    private enum Runtime {
+        ANDROID, OPENJDK, ORACLE_JAVA
+    }
+
+    private enum OS {
+        LINUX, WINDOWS, MAC_OS
     }
 }

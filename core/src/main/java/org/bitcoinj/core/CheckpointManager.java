@@ -64,19 +64,15 @@ import static com.google.common.base.Preconditions.*;
  * for the block header and then 1 zero byte at the end (i.e. number of transactions in the block: always zero).</p>
  */
 public class CheckpointManager {
+    public static final BaseEncoding BASE64 = BaseEncoding.base64().omitPadding();
     private static final Logger log = LoggerFactory.getLogger(CheckpointManager.class);
-
     private static final String BINARY_MAGIC = "CHECKPOINTS 1";
     private static final String TEXTUAL_MAGIC = "TXT CHECKPOINTS 1";
     private static final int MAX_SIGNATURES = 256;
-
     // Map of block header time (in seconds) to data.
     protected final TreeMap<Long, StoredBlock> checkpoints = new TreeMap<>();
-
     protected final NetworkParameters params;
     protected final Sha256Hash dataHash;
-
-    public static final BaseEncoding BASE64 = BaseEncoding.base64().omitPadding();
 
     /**
      * Loads the default checkpoints bundled with bitcoinj
@@ -110,6 +106,32 @@ public class CheckpointManager {
      */
     public static InputStream openStream(NetworkParameters params) {
         return CheckpointManager.class.getResourceAsStream("/" + params.getId() + ".checkpoints.txt");
+    }
+
+    /**
+     * <p>Convenience method that creates a CheckpointManager, loads the given data, gets the checkpoint for the given
+     * time, then inserts it into the store and sets that to be the chain head. Useful when you have just created
+     * a new store from scratch and want to use configure it all in one go.</p>
+     *
+     * <p>Note that timeSecs is adjusted backwards by a week to account for possible clock drift in the block headers.</p>
+     */
+    public static void checkpoint(NetworkParameters params, InputStream checkpoints, BlockStore store, long timeSecs)
+            throws IOException, BlockStoreException {
+        checkNotNull(params);
+        checkNotNull(store);
+        checkArgument(!(store instanceof FullPrunedBlockStore), "You cannot use checkpointing with a full store.");
+
+        timeSecs -= 60 * 60 * 24 * 7; // one week in seconds
+
+        checkArgument(timeSecs > 0);
+        log.info("Attempting to initialize a new block store with a checkpoint for time {} ({})", timeSecs,
+                Utils.dateTimeFormat(timeSecs * 1000));
+
+        BufferedInputStream stream = new BufferedInputStream(checkpoints);
+        CheckpointManager manager = new CheckpointManager(params, stream);
+        StoredBlock checkpoint = manager.getCheckpointBefore(timeSecs);
+        store.put(checkpoint);
+        store.setChainHead(checkpoint);
     }
 
     private Sha256Hash readBinary(InputStream inputStream) throws IOException {
@@ -214,31 +236,5 @@ public class CheckpointManager {
      */
     public Sha256Hash getDataHash() {
         return dataHash;
-    }
-
-    /**
-     * <p>Convenience method that creates a CheckpointManager, loads the given data, gets the checkpoint for the given
-     * time, then inserts it into the store and sets that to be the chain head. Useful when you have just created
-     * a new store from scratch and want to use configure it all in one go.</p>
-     *
-     * <p>Note that timeSecs is adjusted backwards by a week to account for possible clock drift in the block headers.</p>
-     */
-    public static void checkpoint(NetworkParameters params, InputStream checkpoints, BlockStore store, long timeSecs)
-            throws IOException, BlockStoreException {
-        checkNotNull(params);
-        checkNotNull(store);
-        checkArgument(!(store instanceof FullPrunedBlockStore), "You cannot use checkpointing with a full store.");
-
-        timeSecs -= 60 * 60 * 24 * 7; // one week in seconds
-
-        checkArgument(timeSecs > 0);
-        log.info("Attempting to initialize a new block store with a checkpoint for time {} ({})", timeSecs,
-                Utils.dateTimeFormat(timeSecs * 1000));
-
-        BufferedInputStream stream = new BufferedInputStream(checkpoints);
-        CheckpointManager manager = new CheckpointManager(params, stream);
-        StoredBlock checkpoint = manager.getCheckpointBefore(timeSecs);
-        store.put(checkpoint);
-        store.setChainHead(checkpoint);
     }
 }

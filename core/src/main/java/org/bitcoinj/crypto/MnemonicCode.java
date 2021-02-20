@@ -41,19 +41,13 @@ import static org.bitcoinj.core.Utils.HEX;
 
 public class MnemonicCode {
     private static final Logger log = LoggerFactory.getLogger(MnemonicCode.class);
-
-    private ArrayList<String> wordList;
-
     private static final String BIP39_ENGLISH_RESOURCE_NAME = "mnemonic/wordlist/english.txt";
     private static final String BIP39_ENGLISH_SHA256 = "ad90bf3beb7b0eb7e5acd74727dc0da96e0a280a258354e7293fb7e211ac03db";
-
+    private static final int PBKDF2_ROUNDS = 2048;
     /**
      * UNIX time for when the BIP39 standard was finalised. This can be used as a default seed birthday.
      */
     public static long BIP39_STANDARDISATION_TIME_SECS = 1381276800;
-
-    private static final int PBKDF2_ROUNDS = 2048;
-
     public static MnemonicCode INSTANCE;
 
     static {
@@ -68,18 +62,13 @@ public class MnemonicCode {
         }
     }
 
+    private ArrayList<String> wordList;
+
     /**
      * Initialise from the included word list. Won't work on Android.
      */
     public MnemonicCode() throws IOException {
         this(openDefaultWords(), BIP39_ENGLISH_SHA256);
-    }
-
-    private static InputStream openDefaultWords() throws IOException {
-        InputStream stream = MnemonicCode.class.getResourceAsStream(BIP39_ENGLISH_RESOURCE_NAME);
-        if (stream == null)
-            throw new FileNotFoundException(BIP39_ENGLISH_RESOURCE_NAME);
-        return stream;
     }
 
     /**
@@ -109,11 +98,11 @@ public class MnemonicCode {
         }
     }
 
-    /**
-     * Gets the word list this code uses.
-     */
-    public List<String> getWordList() {
-        return wordList;
+    private static InputStream openDefaultWords() throws IOException {
+        InputStream stream = MnemonicCode.class.getResourceAsStream(BIP39_ENGLISH_RESOURCE_NAME);
+        if (stream == null)
+            throw new FileNotFoundException(BIP39_ENGLISH_RESOURCE_NAME);
+        return stream;
     }
 
     /**
@@ -137,6 +126,21 @@ public class MnemonicCode {
         watch.stop();
         log.info("PBKDF2 took {}", watch);
         return seed;
+    }
+
+    private static boolean[] bytesToBits(byte[] data) {
+        boolean[] bits = new boolean[data.length * 8];
+        for (int i = 0; i < data.length; ++i)
+            for (int j = 0; j < 8; ++j)
+                bits[(i * 8) + j] = (data[i] & (1 << (7 - j))) != 0;
+        return bits;
+    }
+
+    /**
+     * Gets the word list this code uses.
+     */
+    public List<String> getWordList() {
+        return wordList;
     }
 
     /**
@@ -208,7 +212,7 @@ public class MnemonicCode {
         boolean[] entropyBits = bytesToBits(entropy);
         int checksumLengthBits = entropyBits.length / 32;
 
-        // We append these bits to the end of the initial entropy. 
+        // We append these bits to the end of the initial entropy.
         boolean[] concatBits = new boolean[entropyBits.length + checksumLengthBits];
         System.arraycopy(entropyBits, 0, concatBits, 0, entropyBits.length);
         System.arraycopy(hashBits, 0, concatBits, entropyBits.length, checksumLengthBits);
@@ -238,13 +242,5 @@ public class MnemonicCode {
      */
     public void check(List<String> words) throws MnemonicException {
         toEntropy(words);
-    }
-
-    private static boolean[] bytesToBits(byte[] data) {
-        boolean[] bits = new boolean[data.length * 8];
-        for (int i = 0; i < data.length; ++i)
-            for (int j = 0; j < 8; ++j)
-                bits[(i * 8) + j] = (data[i] & (1 << (7 - j))) != 0;
-        return bits;
     }
 }

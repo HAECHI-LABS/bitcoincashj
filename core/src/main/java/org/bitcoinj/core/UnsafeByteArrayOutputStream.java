@@ -40,6 +40,12 @@ public class UnsafeByteArrayOutputStream extends ByteArrayOutputStream {
         super(size);
     }
 
+    private static byte[] copyOf(byte[] in, int length) {
+        byte[] out = new byte[length];
+        System.arraycopy(in, 0, out, 0, Math.min(length, in.length));
+        return out;
+    }
+
     /**
      * Writes the specified byte to this byte array output stream.
      *
@@ -128,11 +134,5 @@ public class UnsafeByteArrayOutputStream extends ByteArrayOutputStream {
     @Override
     public int size() {
         return count;
-    }
-
-    private static byte[] copyOf(byte[] in, int length) {
-        byte[] out = new byte[length];
-        System.arraycopy(in, 0, out, 0, Math.min(length, in.length));
-        return out;
     }
 }

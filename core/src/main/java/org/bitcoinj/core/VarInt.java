@@ -57,6 +57,20 @@ public class VarInt {
     }
 
     /**
+     * Returns the minimum encoded size of the given unsigned long value.
+     *
+     * @param value the unsigned long value (beware widening conversion of negatives!)
+     */
+    public static int sizeOf(long value) {
+        // if negative, it's actually a very large unsigned long value
+        if (value < 0) return 9; // 1 marker + 8 data bytes
+        if (value < 253) return 1; // 1 data byte
+        if (value <= 0xFFFFL) return 3; // 1 marker + 2 data bytes
+        if (value <= 0xFFFFFFFFL) return 5; // 1 marker + 4 data bytes
+        return 9; // 1 marker + 8 data bytes
+    }
+
+    /**
      * Returns the original number of bytes used to encode the value if it was
      * deserialized from a byte array, or the minimum encoded size if it was not.
      */
@@ -69,20 +83,6 @@ public class VarInt {
      */
     public final int getSizeInBytes() {
         return sizeOf(value);
-    }
-
-    /**
-     * Returns the minimum encoded size of the given unsigned long value.
-     *
-     * @param value the unsigned long value (beware widening conversion of negatives!)
-     */
-    public static int sizeOf(long value) {
-        // if negative, it's actually a very large unsigned long value
-        if (value < 0) return 9; // 1 marker + 8 data bytes
-        if (value < 253) return 1; // 1 data byte
-        if (value <= 0xFFFFL) return 3; // 1 marker + 2 data bytes
-        if (value <= 0xFFFFFFFFL) return 5; // 1 marker + 4 data bytes
-        return 9; // 1 marker + 8 data bytes
     }
 
     /**

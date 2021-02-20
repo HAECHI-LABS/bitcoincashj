@@ -34,6 +34,14 @@ public class SlpAddressFactory {
         return new SlpAddressFactory();
     }
 
+    private static int calculateHashSizeFromVersionByte(byte version) {
+        int hash_size = 20 + 4 * (version & 0x03);
+        if ((version & 0x04) != 0) {
+            hash_size *= 2;
+        }
+        return hash_size;
+    }
+
     public SlpAddress getFromCashAddress(NetworkParameters params, String address) {
         String addressPrefix = CashAddressHelper.getPrefix(address);
         if (params != null) {
@@ -192,14 +200,6 @@ public class SlpAddressFactory {
             default:
                 throw new AddressFormatException("Unknown Type");
         }
-    }
-
-    private static int calculateHashSizeFromVersionByte(byte version) {
-        int hash_size = 20 + 4 * (version & 0x03);
-        if ((version & 0x04) != 0) {
-            hash_size *= 2;
-        }
-        return hash_size;
     }
 
     private boolean isAcceptablePrefix(NetworkParameters params, String prefix) {

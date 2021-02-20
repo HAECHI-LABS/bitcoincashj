@@ -34,11 +34,9 @@ import java.util.List;
  * <p>Instances of this class are not safe for use by multiple threads.</p>
  */
 public class HeadersMessage extends Message {
-    private static final Logger log = LoggerFactory.getLogger(HeadersMessage.class);
-
     // The main client will never send us more than this number of headers.
     public static final int MAX_HEADERS = 2000;
-
+    private static final Logger log = LoggerFactory.getLogger(HeadersMessage.class);
     private List<Block> blockHeaders;
 
     public HeadersMessage(NetworkParameters params, byte[] payload) throws ProtocolException {

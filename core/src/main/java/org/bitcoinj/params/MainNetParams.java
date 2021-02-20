@@ -35,6 +35,7 @@ public class MainNetParams extends AbstractBitcoinNetParams {
     public static final int MAINNET_MAJORITY_WINDOW = 1000;
     public static final int MAINNET_MAJORITY_REJECT_BLOCK_OUTDATED = 950;
     public static final int MAINNET_MAJORITY_ENFORCE_BLOCK_UPGRADE = 750;
+    private static MainNetParams instance;
 
     public MainNetParams() {
         super();
@@ -102,8 +103,6 @@ public class MainNetParams extends AbstractBitcoinNetParams {
         maxBlockSize = 32 * 1000 * 1000;
         maxBlockSigops = maxBlockSize / 50;
     }
-
-    private static MainNetParams instance;
 
     public static synchronized MainNetParams get() {
         if (instance == null) {

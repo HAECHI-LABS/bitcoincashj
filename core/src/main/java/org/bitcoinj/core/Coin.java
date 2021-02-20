@@ -34,49 +34,41 @@ public final class Coin implements Monetary, Comparable<Coin>, Serializable {
      * constants derive from it.
      */
     public static final int SMALLEST_UNIT_EXPONENT = 8;
-
-    /**
-     * The number of satoshis equal to one bitcoin.
-     */
-    private static final long COIN_VALUE = LongMath.pow(10, SMALLEST_UNIT_EXPONENT);
-
     /**
      * Zero Bitcoins.
      */
     public static final Coin ZERO = Coin.valueOf(0);
-
-    /**
-     * One Bitcoin.
-     */
-    public static final Coin COIN = Coin.valueOf(COIN_VALUE);
-
     /**
      * 0.01 Bitcoins. This unit is not really used much.
      */
     public static final Coin CENT = COIN.divide(100);
-
     /**
      * 0.001 Bitcoins, also known as 1 mBTC.
      */
     public static final Coin MILLICOIN = COIN.divide(1000);
-
     /**
      * 0.000001 Bitcoins, also known as 1 µBTC or 1 uBTC.
      */
     public static final Coin MICROCOIN = MILLICOIN.divide(1000);
-
     /**
      * A satoshi is the smallest unit that can be transferred. 100 million of them fit into a Bitcoin.
      */
     public static final Coin SATOSHI = Coin.valueOf(1);
-
     public static final Coin FIFTY_COINS = COIN.multiply(50);
-
     /**
      * Represents a monetary value of minus one satoshi.
      */
     public static final Coin NEGATIVE_SATOSHI = Coin.valueOf(-1);
-
+    /**
+     * The number of satoshis equal to one bitcoin.
+     */
+    private static final long COIN_VALUE = LongMath.pow(10, SMALLEST_UNIT_EXPONENT);
+    /**
+     * One Bitcoin.
+     */
+    public static final Coin COIN = Coin.valueOf(COIN_VALUE);
+    private static final MonetaryFormat FRIENDLY_FORMAT = MonetaryFormat.BTC.minDecimals(2).repeatOptionalDecimals(1, 6).postfixCode();
+    private static final MonetaryFormat PLAIN_FORMAT = MonetaryFormat.BTC.minDecimals(0).repeatOptionalDecimals(1, 8).noCode();
     /**
      * The number of satoshis of this monetary value.
      */
@@ -94,19 +86,6 @@ public final class Coin implements Monetary, Comparable<Coin>, Serializable {
      */
     public static Coin valueOf(final long satoshis) {
         return new Coin(satoshis);
-    }
-
-    @Override
-    public int smallestUnitExponent() {
-        return SMALLEST_UNIT_EXPONENT;
-    }
-
-    /**
-     * Returns the number of satoshis of this monetary value.
-     */
-    @Override
-    public long getValue() {
-        return value;
     }
 
     /**
@@ -197,6 +176,19 @@ public final class Coin implements Monetary, Comparable<Coin>, Serializable {
         } catch (ArithmeticException e) {
             throw new IllegalArgumentException(e); // Repackage exception to honor method contract
         }
+    }
+
+    @Override
+    public int smallestUnitExponent() {
+        return SMALLEST_UNIT_EXPONENT;
+    }
+
+    /**
+     * Returns the number of satoshis of this monetary value.
+     */
+    @Override
+    public long getValue() {
+        return value;
     }
 
     public Coin add(final Coin value) {
@@ -350,8 +342,6 @@ public final class Coin implements Monetary, Comparable<Coin>, Serializable {
         return satoshiToBtc(this.value);
     }
 
-    private static final MonetaryFormat FRIENDLY_FORMAT = MonetaryFormat.BTC.minDecimals(2).repeatOptionalDecimals(1, 6).postfixCode();
-
     /**
      * Returns the value as a 0.12 type string. More digits after the decimal place will be used
      * if necessary, but two will always be present.
@@ -359,8 +349,6 @@ public final class Coin implements Monetary, Comparable<Coin>, Serializable {
     public String toFriendlyString() {
         return FRIENDLY_FORMAT.format(this).toString();
     }
-
-    private static final MonetaryFormat PLAIN_FORMAT = MonetaryFormat.BTC.minDecimals(0).repeatOptionalDecimals(1, 8).noCode();
 
     /**
      * <p>

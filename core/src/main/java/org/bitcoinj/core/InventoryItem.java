@@ -25,29 +25,8 @@ public class InventoryItem {
      * 4 byte uint32 type field + 32 byte hash
      */
     static final int MESSAGE_LENGTH = 36;
-
-    public enum Type {
-        ERROR(0x0), TRANSACTION(0x1), BLOCK(0x2),
-        // BIP37 extension:
-        FILTERED_BLOCK(0x3);
-
-        public final int code;
-
-        Type(int code) {
-            this.code = code;
-        }
-
-        public static Type ofCode(int code) {
-            for (Type type : values())
-                if (type.code == code)
-                    return type;
-            return null;
-        }
-    }
-
     public final Type type;
     public final Sha256Hash hash;
-
     public InventoryItem(Type type, Sha256Hash hash) {
         this.type = type;
         this.hash = hash;
@@ -69,5 +48,24 @@ public class InventoryItem {
     @Override
     public int hashCode() {
         return Objects.hash(type, hash);
+    }
+
+    public enum Type {
+        ERROR(0x0), TRANSACTION(0x1), BLOCK(0x2),
+        // BIP37 extension:
+        FILTERED_BLOCK(0x3);
+
+        public final int code;
+
+        Type(int code) {
+            this.code = code;
+        }
+
+        public static Type ofCode(int code) {
+            for (Type type : values())
+                if (type.code == code)
+                    return type;
+            return null;
+        }
     }
 }

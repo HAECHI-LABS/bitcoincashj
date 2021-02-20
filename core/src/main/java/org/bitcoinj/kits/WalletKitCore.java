@@ -30,11 +30,13 @@ import static com.google.common.base.Preconditions.checkState;
 
 public class WalletKitCore extends AbstractIdleService {
     protected static final Logger log = LoggerFactory.getLogger(WalletAppKit.class);
+    public boolean useTor = false;
+    public String torProxyIp = "127.0.0.1";
+    public String torProxyPort = "9050";
     protected volatile Context context;
     protected NetworkParameters params;
     protected Script.ScriptType preferredOutputScriptType;
     protected KeyChainGroupStructure structure;
-
     protected WalletProtobufSerializer.WalletFactory walletFactory;
     @Nullable
     protected DeterministicSeed restoreFromSeed;
@@ -43,7 +45,6 @@ public class WalletKitCore extends AbstractIdleService {
     protected File directory;
     protected volatile File vWalletFile;
     protected String filePrefix;
-
     protected boolean useAutoSave = true;
     protected DownloadProgressTracker downloadListener;
     protected boolean blockingStartup = true;
@@ -57,10 +58,6 @@ public class WalletKitCore extends AbstractIdleService {
     protected volatile PeerGroup vPeerGroup;
     @Nullable
     protected PeerDiscovery discovery;
-
-    public boolean useTor = false;
-    public String torProxyIp = "127.0.0.1";
-    public String torProxyPort = "9050";
 
     /**
      * Sets a wallet factory which will be used when the kit creates a new wallet.

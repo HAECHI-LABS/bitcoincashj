@@ -47,15 +47,12 @@ import static com.google.common.base.Preconditions.checkState;
  */
 class ConnectionHandler implements MessageWriteTarget {
     private static final org.slf4j.Logger log = LoggerFactory.getLogger(ConnectionHandler.class);
+    private static final int BUFFER_SIZE_LOWER_BOUND = 4096;
+    private static final int BUFFER_SIZE_UPPER_BOUND = 65536;
+    private static final int OUTBOUND_BUFFER_BYTE_COUNT = Message.MAX_SIZE + 24; // 24 byte message header
     // We lock when touching local flags and when writing data, but NEVER when calling any methods which leave this
     // class into non-Java classes.
     private final ReentrantLock lock = Threading.lock(ConnectionHandler.class);
-
-    private static final int BUFFER_SIZE_LOWER_BOUND = 4096;
-    private static final int BUFFER_SIZE_UPPER_BOUND = 65536;
-
-    private static final int OUTBOUND_BUFFER_BYTE_COUNT = Message.MAX_SIZE + 24; // 24 byte message header
-
     @GuardedBy("lock")
     private final ByteBuffer readBuff;
     @GuardedBy("lock")
@@ -63,25 +60,13 @@ class ConnectionHandler implements MessageWriteTarget {
     @GuardedBy("lock")
     private final SelectionKey key;
     @GuardedBy("lock")
+    private final LinkedList<BytesAndFuture> bytesToWrite = new LinkedList<>();
+    @GuardedBy("lock")
     StreamConnection connection;
     @GuardedBy("lock")
     private boolean closeCalled = false;
-
     @GuardedBy("lock")
     private long bytesToWriteRemaining = 0;
-    @GuardedBy("lock")
-    private final LinkedList<BytesAndFuture> bytesToWrite = new LinkedList<>();
-
-    private static class BytesAndFuture {
-        public final ByteBuffer bytes;
-        public final SettableFuture future;
-
-        public BytesAndFuture(ByteBuffer bytes, SettableFuture future) {
-            this.bytes = bytes;
-            this.future = future;
-        }
-    }
-
     private Set<ConnectionHandler> connectedHandlers;
 
     public ConnectionHandler(StreamConnectionFactory connectionFactory, SelectionKey key) throws IOException {
@@ -116,6 +101,48 @@ class ConnectionHandler implements MessageWriteTarget {
                 checkState(this.connectedHandlers.add(this));
         } finally {
             lock.unlock();
+        }
+    }
+
+    // Handle a SelectionKey which was selected
+    // Runs unlocked as the caller is single-threaded (or if not, should enforce that handleKey is only called
+    // atomically for a given ConnectionHandler)
+    public static void handleKey(SelectionKey key) {
+        ConnectionHandler handler = ((ConnectionHandler) key.attachment());
+        try {
+            if (handler == null)
+                return;
+            if (!key.isValid()) {
+                handler.closeConnection(); // Key has been cancelled, make sure the socket gets closed
+                return;
+            }
+            if (key.isReadable()) {
+                // Do a socket read and invoke the connection's receiveBytes message
+                int read = handler.channel.read(handler.readBuff);
+                if (read == 0)
+                    return; // Was probably waiting on a write
+                else if (read == -1) { // Socket was closed
+                    key.cancel();
+                    handler.closeConnection();
+                    return;
+                }
+                // "flip" the buffer - setting the limit to the current position and setting position to 0
+                handler.readBuff.flip();
+                // Use connection.receiveBytes's return value as a check that it stopped reading at the right location
+                int bytesConsumed = checkNotNull(handler.connection).receiveBytes(handler.readBuff);
+                checkState(handler.readBuff.position() == bytesConsumed);
+                // Now drop the bytes which were read by compacting readBuff (resetting limit and keeping relative
+                // position)
+                handler.readBuff.compact();
+            }
+            if (key.isWritable())
+                handler.tryWriteBytes();
+        } catch (Exception e) {
+            // This can happen eg if the channel closes while the thread is about to get killed
+            // (ClosedByInterruptException), or if handler.connection.receiveBytes throws something
+            Throwable t = Throwables.getRootCause(e);
+            log.warn("Error handling SelectionKey: {} {}", t.getClass().getName(), t.getMessage() != null ? t.getMessage() : "", e);
+            handler.closeConnection();
         }
     }
 
@@ -217,45 +244,13 @@ class ConnectionHandler implements MessageWriteTarget {
         }
     }
 
-    // Handle a SelectionKey which was selected
-    // Runs unlocked as the caller is single-threaded (or if not, should enforce that handleKey is only called
-    // atomically for a given ConnectionHandler)
-    public static void handleKey(SelectionKey key) {
-        ConnectionHandler handler = ((ConnectionHandler) key.attachment());
-        try {
-            if (handler == null)
-                return;
-            if (!key.isValid()) {
-                handler.closeConnection(); // Key has been cancelled, make sure the socket gets closed
-                return;
-            }
-            if (key.isReadable()) {
-                // Do a socket read and invoke the connection's receiveBytes message
-                int read = handler.channel.read(handler.readBuff);
-                if (read == 0)
-                    return; // Was probably waiting on a write
-                else if (read == -1) { // Socket was closed
-                    key.cancel();
-                    handler.closeConnection();
-                    return;
-                }
-                // "flip" the buffer - setting the limit to the current position and setting position to 0
-                handler.readBuff.flip();
-                // Use connection.receiveBytes's return value as a check that it stopped reading at the right location
-                int bytesConsumed = checkNotNull(handler.connection).receiveBytes(handler.readBuff);
-                checkState(handler.readBuff.position() == bytesConsumed);
-                // Now drop the bytes which were read by compacting readBuff (resetting limit and keeping relative
-                // position)
-                handler.readBuff.compact();
-            }
-            if (key.isWritable())
-                handler.tryWriteBytes();
-        } catch (Exception e) {
-            // This can happen eg if the channel closes while the thread is about to get killed
-            // (ClosedByInterruptException), or if handler.connection.receiveBytes throws something
-            Throwable t = Throwables.getRootCause(e);
-            log.warn("Error handling SelectionKey: {} {}", t.getClass().getName(), t.getMessage() != null ? t.getMessage() : "", e);
-            handler.closeConnection();
+    private static class BytesAndFuture {
+        public final ByteBuffer bytes;
+        public final SettableFuture future;
+
+        public BytesAndFuture(ByteBuffer bytes, SettableFuture future) {
+            this.bytes = bytes;
+            this.future = future;
         }
     }
 }

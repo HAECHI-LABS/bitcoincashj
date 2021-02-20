@@ -95,6 +95,31 @@ public final class BtcFixedFormat extends BtcFormat {
         this.scale = scale;
     }
 
+    private static String prefixLabel(int scale) {
+        switch (scale) {
+            case COIN_SCALE:
+                return "Coin-";
+            case 1:
+                return "Decicoin-";
+            case 2:
+                return "Centicoin-";
+            case MILLICOIN_SCALE:
+                return "Millicoin-";
+            case MICROCOIN_SCALE:
+                return "Microcoin-";
+            case -1:
+                return "Dekacoin-";
+            case -2:
+                return "Hectocoin-";
+            case -3:
+                return "Kilocoin-";
+            case -6:
+                return "Megacoin-";
+            default:
+                return "Fixed (" + scale + ") ";
+        }
+    }
+
     /**
      * Return the decimal-place shift for this object's unit-denomination.  For example, if
      * the denomination is millibitcoins, this method will return the value {@code 3}.  As
@@ -178,31 +203,6 @@ public final class BtcFixedFormat extends BtcFormat {
     @Override
     public int hashCode() {
         return Objects.hash(super.hashCode(), scale);
-    }
-
-    private static String prefixLabel(int scale) {
-        switch (scale) {
-            case COIN_SCALE:
-                return "Coin-";
-            case 1:
-                return "Decicoin-";
-            case 2:
-                return "Centicoin-";
-            case MILLICOIN_SCALE:
-                return "Millicoin-";
-            case MICROCOIN_SCALE:
-                return "Microcoin-";
-            case -1:
-                return "Dekacoin-";
-            case -2:
-                return "Hectocoin-";
-            case -3:
-                return "Kilocoin-";
-            case -6:
-                return "Megacoin-";
-            default:
-                return "Fixed (" + scale + ") ";
-        }
     }
 
     /**

@@ -56,13 +56,15 @@ import static com.google.common.base.Preconditions.checkState;
  */
 public class Peer extends PeerSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(Peer.class);
+    private static final int PENDING_TX_DOWNLOADS_LIMIT = 100;
+    // Disconnect from a peer that is not responding to Pings
+    private static final int PENDING_PINGS_LIMIT = 50;
+    private static final int PING_MOVING_AVERAGE_WINDOW = 20;
     protected final ReentrantLock lock = Threading.lock(Peer.class);
-
     private final NetworkParameters params;
     private final AbstractBlockChain blockChain;
     private final long requiredServices;
     private final Context context;
-
     private final CopyOnWriteArrayList<ListenerRegistration<BlocksDownloadedEventListener>> blocksDownloadedEventListeners
             = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<ListenerRegistration<ChainDownloadStartedEventListener>> chainDownloadStartedEventListeners
@@ -77,21 +79,58 @@ public class Peer extends PeerSocketHandler {
             = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<ListenerRegistration<OnTransactionBroadcastListener>> onTransactionEventListeners
             = new CopyOnWriteArrayList<>();
-    // Whether to try and download blocks and transactions from this peer. Set to false by PeerGroup if not the
-    // primary peer. This is to avoid redundant work and concurrency problems with downloading the same chain
-    // in parallel.
-    private volatile boolean vDownloadData;
     // The version data to announce to the other side of the connections we make: useful for setting our "user agent"
     // equivalent and other things.
     private final VersionMessage versionMessage;
-    // Maximum depth up to which pending transaction dependencies are downloaded, or 0 for disabled.
-    private volatile int vDownloadTxDependencyDepth;
     // How many block messages the peer has announced to us. Peers only announce blocks that attach to their best chain
     // so we can use this to calculate the height of the peers chain, by adding it to the initial height in the version
     // message. This method can go wrong if the peer re-orgs onto a shorter (but harder) chain, however, this is rare.
     private final AtomicInteger blocksAnnounced = new AtomicInteger();
     // Each wallet added to the peer will be notified of downloaded transaction data.
     private final CopyOnWriteArrayList<Wallet> wallets;
+    // Keeps track of things we requested internally with getdata but didn't receive yet, so we can avoid re-requests.
+    // It's not quite the same as getDataFutures, as this is used only for getdatas done as part of downloading
+    // the chain and so is lighter weight (we just keep a bunch of hashes not futures).
+    //
+    // It is important to avoid a nasty edge case where we can end up with parallel chain downloads proceeding
+    // simultaneously if we were to receive a newly solved block whilst parts of the chain are streaming to us.
+    private final HashSet<Sha256Hash> pendingBlockDownloads = new HashSet<>();
+    // Keep references to TransactionConfidence objects for transactions that were announced by a remote peer, but
+    // which we haven't downloaded yet. These objects are de-duplicated by the TxConfidenceTable class.
+    // Once the tx is downloaded (by some peer), the Transaction object that is created will have a reference to
+    // the confidence object held inside it, and it's then up to the event listeners that receive the Transaction
+    // to keep it pinned to the root set if they care about this data.
+    @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
+    private final HashSet<TransactionConfidence> pendingTxDownloads = new HashSet<>();
+    // TODO: The types/locking should be rationalised a bit.
+    private final CopyOnWriteArrayList<GetDataRequest> getDataFutures;
+    @GuardedBy("getAddrFutures")
+    private final LinkedList<SettableFuture<AddressMessage>> getAddrFutures;
+    // Outstanding pings against this peer and how long the last one took to complete.
+    private final ReentrantLock lastPingTimesLock = new ReentrantLock();
+    private final CopyOnWriteArrayList<PendingPing> pendingPings;
+    // A settable future which completes (with this) when the connection is open
+    private final SettableFuture<Peer> connectionOpenFuture = SettableFuture.create();
+    private final SettableFuture<Peer> outgoingVersionHandshakeFuture = SettableFuture.create();
+    private final SettableFuture<Peer> incomingVersionHandshakeFuture = SettableFuture.create();
+    private final ListenableFuture<Peer> versionHandshakeFuture = Futures.transform(
+            Futures.allAsList(outgoingVersionHandshakeFuture, incomingVersionHandshakeFuture),
+            new Function<List<Peer>, Peer>() {
+
+                @Override
+                @Nullable
+                public Peer apply(@Nullable List<Peer> peers) {
+                    checkNotNull(peers);
+                    checkState(peers.size() == 2 && peers.get(0) == peers.get(1));
+                    return peers.get(0);
+                }
+            }, MoreExecutors.directExecutor());
+    // Whether to try and download blocks and transactions from this peer. Set to false by PeerGroup if not the
+    // primary peer. This is to avoid redundant work and concurrency problems with downloading the same chain
+    // in parallel.
+    private volatile boolean vDownloadData;
+    // Maximum depth up to which pending transaction dependencies are downloaded, or 0 for disabled.
+    private volatile int vDownloadTxDependencyDepth;
     // A time before which we only download block headers, after that point we download block bodies.
     @GuardedBy("lock")
     private long fastCatchupTimeSecs;
@@ -113,71 +152,18 @@ public class Peer extends PeerSocketHandler {
     @GuardedBy("lock")
     @Nullable
     private List<Sha256Hash> awaitingFreshFilter;
-    // Keeps track of things we requested internally with getdata but didn't receive yet, so we can avoid re-requests.
-    // It's not quite the same as getDataFutures, as this is used only for getdatas done as part of downloading
-    // the chain and so is lighter weight (we just keep a bunch of hashes not futures).
-    //
-    // It is important to avoid a nasty edge case where we can end up with parallel chain downloads proceeding
-    // simultaneously if we were to receive a newly solved block whilst parts of the chain are streaming to us.
-    private final HashSet<Sha256Hash> pendingBlockDownloads = new HashSet<>();
-    // Keep references to TransactionConfidence objects for transactions that were announced by a remote peer, but
-    // which we haven't downloaded yet. These objects are de-duplicated by the TxConfidenceTable class.
-    // Once the tx is downloaded (by some peer), the Transaction object that is created will have a reference to
-    // the confidence object held inside it, and it's then up to the event listeners that receive the Transaction
-    // to keep it pinned to the root set if they care about this data.
-    @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
-    private final HashSet<TransactionConfidence> pendingTxDownloads = new HashSet<>();
-    private static final int PENDING_TX_DOWNLOADS_LIMIT = 100;
     // The lowest version number we're willing to accept. Lower than this will result in an immediate disconnect.
     private volatile int vMinProtocolVersion;
-
-    // When an API user explicitly requests a block or transaction from a peer, the InventoryItem is put here
-    // whilst waiting for the response. Is not used for downloads Peer generates itself.
-    private static class GetDataRequest {
-        public GetDataRequest(Sha256Hash hash, SettableFuture future) {
-            this.hash = hash;
-            this.future = future;
-        }
-
-        final Sha256Hash hash;
-        final SettableFuture future;
-    }
-
-    // TODO: The types/locking should be rationalised a bit.
-    private final CopyOnWriteArrayList<GetDataRequest> getDataFutures;
-    @GuardedBy("getAddrFutures")
-    private final LinkedList<SettableFuture<AddressMessage>> getAddrFutures;
     @Nullable
     @GuardedBy("lock")
     private LinkedList<SettableFuture<UTXOsMessage>> getutxoFutures;
-
-    // Outstanding pings against this peer and how long the last one took to complete.
-    private final ReentrantLock lastPingTimesLock = new ReentrantLock();
     @GuardedBy("lastPingTimesLock")
     private long[] lastPingTimes = null;
-    private final CopyOnWriteArrayList<PendingPing> pendingPings;
-    // Disconnect from a peer that is not responding to Pings
-    private static final int PENDING_PINGS_LIMIT = 50;
-    private static final int PING_MOVING_AVERAGE_WINDOW = 20;
-
     private volatile VersionMessage vPeerVersionMessage;
-
-    // A settable future which completes (with this) when the connection is open
-    private final SettableFuture<Peer> connectionOpenFuture = SettableFuture.create();
-    private final SettableFuture<Peer> outgoingVersionHandshakeFuture = SettableFuture.create();
-    private final SettableFuture<Peer> incomingVersionHandshakeFuture = SettableFuture.create();
-    private final ListenableFuture<Peer> versionHandshakeFuture = Futures.transform(
-            Futures.allAsList(outgoingVersionHandshakeFuture, incomingVersionHandshakeFuture),
-            new Function<List<Peer>, Peer>() {
-
-                @Override
-                @Nullable
-                public Peer apply(@Nullable List<Peer> peers) {
-                    checkNotNull(peers);
-                    checkState(peers.size() == 2 && peers.get(0) == peers.get(1));
-                    return peers.get(0);
-                }
-            }, MoreExecutors.directExecutor());
+    // Keep track of the last request we made to the peer in blockChainDownloadLocked so we can avoid redundant and harmful
+    // getblocks requests.
+    @GuardedBy("lock")
+    private Sha256Hash lastGetBlocksBegin, lastGetBlocksEnd;
 
     /**
      * @deprecated Use {@link #Peer(NetworkParameters, VersionMessage, PeerAddress, AbstractBlockChain)}.
@@ -1427,11 +1413,6 @@ public class Peer extends PeerSocketHandler {
         wallets.remove(wallet);
     }
 
-    // Keep track of the last request we made to the peer in blockChainDownloadLocked so we can avoid redundant and harmful
-    // getblocks requests.
-    @GuardedBy("lock")
-    private Sha256Hash lastGetBlocksBegin, lastGetBlocksEnd;
-
     @GuardedBy("lock")
     private void blockChainDownloadLocked(Sha256Hash toHash) {
         checkState(lock.isHeldByCurrentThread());
@@ -1543,31 +1524,6 @@ public class Peer extends PeerSocketHandler {
                 blockChainDownloadLocked(Sha256Hash.ZERO_HASH);
             } finally {
                 lock.unlock();
-            }
-        }
-    }
-
-    private class PendingPing {
-        // The future that will be invoked when the pong is heard back.
-        public final SettableFuture<Long> future;
-        // The random nonce that lets us tell apart overlapping pings/pongs.
-        public final long nonce;
-        // Measurement of the time elapsed.
-        public final long startTimeMsec;
-
-        public PendingPing(long nonce) {
-            this.future = SettableFuture.create();
-            this.nonce = nonce;
-            this.startTimeMsec = Utils.currentTimeMillis();
-        }
-
-        public void complete() {
-            if (!future.isDone()) {
-                long elapsed = Utils.currentTimeMillis() - startTimeMsec;
-                Peer.this.addPingTimeData(elapsed);
-                if (log.isDebugEnabled())
-                    log.debug("{}: ping time is {} ms", Peer.this.toString(), elapsed);
-                future.set(elapsed);
             }
         }
     }
@@ -1745,25 +1701,6 @@ public class Peer extends PeerSocketHandler {
 
     /**
      * <p>Sets a Bloom filter on this connection. This will cause the given {@link BloomFilter} object to be sent to the
-     * remote peer and if either a memory pool has been set using the constructor or the
-     * vDownloadData property is true, a {@link MemoryPoolMessage} is sent as well to trigger downloading of any
-     * pending transactions that may be relevant.</p>
-     *
-     * <p>The Peer does not automatically request filters from any wallets added using {@link Peer#addWallet(Wallet)}.
-     * This is to allow callers to avoid redundantly recalculating the same filter repeatedly when using multiple peers
-     * and multiple wallets together.</p>
-     *
-     * <p>Therefore, you should not use this method if your app uses a {@link PeerGroup}. It is called for you.</p>
-     *
-     * <p>If the remote peer doesn't support Bloom filtering, then this call is ignored. Once set you presently cannot
-     * unset a filter, though the underlying p2p protocol does support it.</p>
-     */
-    public void setBloomFilter(BloomFilter filter) {
-        setBloomFilter(filter, true);
-    }
-
-    /**
-     * <p>Sets a Bloom filter on this connection. This will cause the given {@link BloomFilter} object to be sent to the
      * remote peer and if requested, a {@link MemoryPoolMessage} is sent as well to trigger downloading of any
      * pending transactions that may be relevant.</p>
      *
@@ -1838,6 +1775,25 @@ public class Peer extends PeerSocketHandler {
     }
 
     /**
+     * <p>Sets a Bloom filter on this connection. This will cause the given {@link BloomFilter} object to be sent to the
+     * remote peer and if either a memory pool has been set using the constructor or the
+     * vDownloadData property is true, a {@link MemoryPoolMessage} is sent as well to trigger downloading of any
+     * pending transactions that may be relevant.</p>
+     *
+     * <p>The Peer does not automatically request filters from any wallets added using {@link Peer#addWallet(Wallet)}.
+     * This is to allow callers to avoid redundantly recalculating the same filter repeatedly when using multiple peers
+     * and multiple wallets together.</p>
+     *
+     * <p>Therefore, you should not use this method if your app uses a {@link PeerGroup}. It is called for you.</p>
+     *
+     * <p>If the remote peer doesn't support Bloom filtering, then this call is ignored. Once set you presently cannot
+     * unset a filter, though the underlying p2p protocol does support it.</p>
+     */
+    public void setBloomFilter(BloomFilter filter) {
+        setBloomFilter(filter, true);
+    }
+
+    /**
      * Sends a query to the remote peer asking for the unspent transaction outputs (UTXOs) for the given outpoints,
      * with the memory pool included. The result should be treated only as a hint: it's possible for the returned
      * outputs to be fictional and not exist in any transaction, and it's possible for them to be spent the moment
@@ -1905,5 +1861,41 @@ public class Peer extends PeerSocketHandler {
      */
     public void setDownloadTxDependencies(int depth) {
         vDownloadTxDependencyDepth = depth;
+    }
+
+    // When an API user explicitly requests a block or transaction from a peer, the InventoryItem is put here
+    // whilst waiting for the response. Is not used for downloads Peer generates itself.
+    private static class GetDataRequest {
+        final Sha256Hash hash;
+        final SettableFuture future;
+        public GetDataRequest(Sha256Hash hash, SettableFuture future) {
+            this.hash = hash;
+            this.future = future;
+        }
+    }
+
+    private class PendingPing {
+        // The future that will be invoked when the pong is heard back.
+        public final SettableFuture<Long> future;
+        // The random nonce that lets us tell apart overlapping pings/pongs.
+        public final long nonce;
+        // Measurement of the time elapsed.
+        public final long startTimeMsec;
+
+        public PendingPing(long nonce) {
+            this.future = SettableFuture.create();
+            this.nonce = nonce;
+            this.startTimeMsec = Utils.currentTimeMillis();
+        }
+
+        public void complete() {
+            if (!future.isDone()) {
+                long elapsed = Utils.currentTimeMillis() - startTimeMsec;
+                Peer.this.addPingTimeData(elapsed);
+                if (log.isDebugEnabled())
+                    log.debug("{}: ping time is {} ms", Peer.this.toString(), elapsed);
+                future.set(elapsed);
+            }
+        }
     }
 }

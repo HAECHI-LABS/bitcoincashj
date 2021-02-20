@@ -67,6 +67,7 @@ import java.util.Objects;
  * out what went wrong more precisely. Same thing if you just use the {@link #startAsync()} method.</p>
  */
 public class SlpBIP47AppKit extends BIP47AppKit {
+    SlpAddressFactory slpAddressFactory = SlpAddressFactory.create();
     private File tokensFile;
     private long MIN_DUST = 546L;
     private ArrayList<SlpUTXO> slpUtxos = new ArrayList<>();
@@ -243,8 +244,6 @@ public class SlpBIP47AppKit extends BIP47AppKit {
     public ArrayList<SlpUTXO> getSlpUtxos() {
         return this.slpUtxos;
     }
-
-    SlpAddressFactory slpAddressFactory = SlpAddressFactory.create();
 
     public SlpAddress currentSlpReceiveAddress() {
         return slpAddressFactory.fromP2PKHHash(this.wallet().getParams(), this.wallet().currentReceiveAddress().getHash160());

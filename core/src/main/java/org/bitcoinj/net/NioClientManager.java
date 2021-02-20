@@ -42,26 +42,22 @@ import java.util.concurrent.LinkedBlockingQueue;
  */
 public class NioClientManager extends AbstractExecutionThreadService implements ClientConnectionManager {
     private static final org.slf4j.Logger log = LoggerFactory.getLogger(NioClientManager.class);
-
-    private final Selector selector;
-
-    class PendingConnect {
-        SocketChannel sc;
-        StreamConnection connection;
-        SocketAddress address;
-        SettableFuture<SocketAddress> future = SettableFuture.create();
-
-        PendingConnect(SocketChannel sc, StreamConnection connection, SocketAddress address) {
-            this.sc = sc;
-            this.connection = connection;
-            this.address = address;
-        }
-    }
-
     final Queue<PendingConnect> newConnectionChannels = new LinkedBlockingQueue<>();
-
+    private final Selector selector;
     // Added to/removed from by the individual ConnectionHandler's, thus must by synchronized on its own.
     private final Set<ConnectionHandler> connectedHandlers = Collections.synchronizedSet(new HashSet<ConnectionHandler>());
+
+    /**
+     * Creates a new client manager which uses Java NIO for socket management. Uses a single thread to handle all select
+     * calls.
+     */
+    public NioClientManager() {
+        try {
+            selector = SelectorProvider.provider().openSelector();
+        } catch (IOException e) {
+            throw new RuntimeException(e); // Shouldn't ever happen
+        }
+    }
 
     // Handle a SelectionKey which was selected
     private void handleKey(SelectionKey key) throws IOException {
@@ -96,18 +92,6 @@ public class NioClientManager extends AbstractExecutionThreadService implements 
             }
         } else // Process bytes read
             ConnectionHandler.handleKey(key);
-    }
-
-    /**
-     * Creates a new client manager which uses Java NIO for socket management. Uses a single thread to handle all select
-     * calls.
-     */
-    public NioClientManager() {
-        try {
-            selector = SelectorProvider.provider().openSelector();
-        } catch (IOException e) {
-            throw new RuntimeException(e); // Shouldn't ever happen
-        }
     }
 
     @Override
@@ -204,5 +188,18 @@ public class NioClientManager extends AbstractExecutionThreadService implements 
                 new ContextPropagatingThreadFactory("NioClientManager").newThread(command).start();
             }
         };
+    }
+
+    class PendingConnect {
+        SocketChannel sc;
+        StreamConnection connection;
+        SocketAddress address;
+        SettableFuture<SocketAddress> future = SettableFuture.create();
+
+        PendingConnect(SocketChannel sc, StreamConnection connection, SocketAddress address) {
+            this.sc = sc;
+            this.connection = connection;
+            this.address = address;
+        }
     }
 }

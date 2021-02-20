@@ -30,6 +30,18 @@ import java.util.Arrays;
  */
 public class DumpedPrivateKey extends PrefixedChecksummedBytes {
 
+    private DumpedPrivateKey(NetworkParameters params, byte[] bytes) {
+        super(params, bytes);
+        if (bytes.length != 32 && bytes.length != 33)
+            throw new AddressFormatException.InvalidDataLength(
+                    "Wrong number of bytes for a private key (32 or 33): " + bytes.length);
+    }
+
+    // Used by ECKey.getPrivateKeyEncoded()
+    DumpedPrivateKey(NetworkParameters params, byte[] keyBytes, boolean compressed) {
+        this(params, encode(keyBytes, compressed));
+    }
+
     /**
      * Construct a private key from its Base58 representation.
      *
@@ -55,27 +67,6 @@ public class DumpedPrivateKey extends PrefixedChecksummedBytes {
         }
     }
 
-    private DumpedPrivateKey(NetworkParameters params, byte[] bytes) {
-        super(params, bytes);
-        if (bytes.length != 32 && bytes.length != 33)
-            throw new AddressFormatException.InvalidDataLength(
-                    "Wrong number of bytes for a private key (32 or 33): " + bytes.length);
-    }
-
-    // Used by ECKey.getPrivateKeyEncoded()
-    DumpedPrivateKey(NetworkParameters params, byte[] keyBytes, boolean compressed) {
-        this(params, encode(keyBytes, compressed));
-    }
-
-    /**
-     * Returns the base58-encoded textual form, including version and checksum bytes.
-     *
-     * @return textual form
-     */
-    public String toBase58() {
-        return Base58.encodeChecked(params.getDumpedPrivateKeyHeader(), bytes);
-    }
-
     private static byte[] encode(byte[] keyBytes, boolean compressed) {
         Preconditions.checkArgument(keyBytes.length == 32, "Private keys must be 32 bytes");
         if (!compressed) {
@@ -87,6 +78,15 @@ public class DumpedPrivateKey extends PrefixedChecksummedBytes {
             bytes[32] = 1;
             return bytes;
         }
+    }
+
+    /**
+     * Returns the base58-encoded textual form, including version and checksum bytes.
+     *
+     * @return textual form
+     */
+    public String toBase58() {
+        return Base58.encodeChecked(params.getDumpedPrivateKeyHeader(), bytes);
     }
 
     /**

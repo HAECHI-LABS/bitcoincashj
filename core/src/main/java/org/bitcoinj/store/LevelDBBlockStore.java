@@ -35,9 +35,9 @@ public class LevelDBBlockStore implements BlockStore {
     private static final byte[] CHAIN_HEAD_KEY = "chainhead".getBytes();
 
     private final Context context;
-    private DB db;
     private final ByteBuffer buffer = ByteBuffer.allocate(StoredBlock.COMPACT_SERIALIZED_SIZE);
     private final File path;
+    private DB db;
 
     /**
      * Creates a LevelDB SPV block store using the JNI/C++ version of LevelDB.

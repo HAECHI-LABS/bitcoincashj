@@ -44,7 +44,6 @@ import org.bitcoinj.wallet.listeners.KeyChainEventListener;
 import org.bitcoinj.wallet.listeners.ScriptsChangeEventListener;
 import org.bitcoinj.wallet.listeners.WalletCoinsReceivedEventListener;
 import org.bitcoinj.wallet.listeners.WalletCoinsSentEventListener;
-import org.slf4j.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -79,63 +78,40 @@ import static com.google.common.base.Preconditions.*;
  * but starting and stopping the service should be fine.</p>
  */
 public class PeerGroup implements TransactionBroadcaster {
-    private static final Logger log = LoggerFactory.getLogger(PeerGroup.class);
-    protected final ReentrantLock lock = Threading.lock(PeerGroup.class);
+    /**
+     * How many milliseconds to wait after receiving a pong before sending another ping.
+     */
+    public static final long DEFAULT_PING_INTERVAL_MSEC = 2000;
+    /**
+     * The default Bloom filter false positive rate, which is selected to be extremely low such that you hardly ever
+     * download false positives. This provides maximum performance. Although this default can be overridden to push
+     * the FP rate higher, due to <a href="https://groups.google.com/forum/#!msg/bitcoinj/Ys13qkTwcNg/9qxnhwnkeoIJ">
+     * various complexities</a> there are still ways a remote peer can deanonymize the users wallet. This is why the
+     * FP rate is chosen for performance rather than privacy. If a future version of bitcoinj fixes the known
+     * de-anonymization attacks this FP rate may rise again (or more likely, become expressed as a bandwidth allowance).
+     */
+    public static final double DEFAULT_BLOOM_FILTER_FP_RATE = 0.00001;
 
     // All members in this class should be marked with final, volatile, @GuardedBy or a mix as appropriate to define
     // their thread safety semantics. Volatile requires a Hungarian-style v prefix.
-
-    // By default we don't require any services because any peer will do.
-    private long requiredServices = 0;
     /**
-     * The default number of connections to the p2p network the library will try to build. This is set to 12 empirically.
-     * It used to be 4, but because we divide the connection pool in two for broadcasting transactions, that meant we
-     * were only sending transactions to two peers and sometimes this wasn't reliable enough: transactions wouldn't
-     * get through.
+     * Maximum increase in FP rate before forced refresh of the bloom filter
      */
-    private volatile int vMaxPeersToDiscoverCount = 100;
+    public static final double MAX_FP_RATE_INCREASE = 10.0f;
+    /**
+     * The default timeout between when a connection attempt begins and version message exchange completes
+     */
+    public static final int DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000;
+    private static final Logger log = LoggerFactory.getLogger(PeerGroup.class);
     private static final long DEFAULT_PEER_DISCOVERY_TIMEOUT_MILLIS = 5000;
-    private volatile long vPeerDiscoveryTimeoutMillis = DEFAULT_PEER_DISCOVERY_TIMEOUT_MILLIS;
-
+    protected final ReentrantLock lock = Threading.lock(PeerGroup.class);
     protected final NetworkParameters params;
     @Nullable
     protected final AbstractBlockChain chain;
-
     // This executor is used to queue up jobs: it's used when we don't want to use locks for mutual exclusion,
     // typically because the job might call in to user provided code that needs/wants the freedom to use the API
     // however it wants, or because a job needs to be ordered relative to other jobs like that.
     protected final ListeningScheduledExecutorService executor;
-
-    // Whether the peer group is currently running. Once shut down it cannot be restarted.
-    private volatile boolean vRunning;
-    // Whether the peer group has been started or not. An unstarted PG does not try to access the network.
-    private volatile boolean vUsedUp;
-
-    // Addresses to try to connect to, excluding active peers.
-    @GuardedBy("lock")
-    private final PriorityQueue<PeerAddress> inactives;
-    @GuardedBy("lock")
-    private final Map<PeerAddress, ExponentialBackoff> backoffMap;
-    @GuardedBy("lock")
-    private final Map<PeerAddress, Integer> priorityMap;
-
-    // Currently active peers. This is an ordered list rather than a set to make unit tests predictable.
-    private final CopyOnWriteArrayList<Peer> peers;
-    // Currently connecting peers.
-    private final CopyOnWriteArrayList<Peer> pendingPeers;
-    private final ClientConnectionManager channels;
-
-    // The peer that has been selected for the purposes of downloading announced data.
-    @GuardedBy("lock")
-    private Peer downloadPeer;
-    // Callback for events related to chain download.
-    @Nullable
-    @GuardedBy("lock")
-    private PeerDataEventListener downloadListener;
-    private final CopyOnWriteArrayList<ListenerRegistration<BlocksDownloadedEventListener>> peersBlocksDownloadedEventListeners
-            = new CopyOnWriteArrayList<>();
-    private final CopyOnWriteArrayList<ListenerRegistration<ChainDownloadStartedEventListener>> peersChainDownloadStartedEventListeners
-            = new CopyOnWriteArrayList<>();
     /**
      * Callbacks for events related to peers connecting
      */
@@ -151,6 +127,24 @@ public class PeerGroup implements TransactionBroadcaster {
      */
     protected final CopyOnWriteArrayList<ListenerRegistration<PeerDisconnectedEventListener>> peerDisconnectedEventListeners
             = new CopyOnWriteArrayList<>();
+    protected final CopyOnWriteArrayList<ListenerRegistration<OnTransactionBroadcastListener>> peersTransactionBroadastEventListeners
+            = new CopyOnWriteArrayList<>();
+    // Addresses to try to connect to, excluding active peers.
+    @GuardedBy("lock")
+    private final PriorityQueue<PeerAddress> inactives;
+    @GuardedBy("lock")
+    private final Map<PeerAddress, ExponentialBackoff> backoffMap;
+    @GuardedBy("lock")
+    private final Map<PeerAddress, Integer> priorityMap;
+    // Currently active peers. This is an ordered list rather than a set to make unit tests predictable.
+    private final CopyOnWriteArrayList<Peer> peers;
+    // Currently connecting peers.
+    private final CopyOnWriteArrayList<Peer> pendingPeers;
+    private final ClientConnectionManager channels;
+    private final CopyOnWriteArrayList<ListenerRegistration<BlocksDownloadedEventListener>> peersBlocksDownloadedEventListeners
+            = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<ListenerRegistration<ChainDownloadStartedEventListener>> peersChainDownloadStartedEventListeners
+            = new CopyOnWriteArrayList<>();
     /**
      * Callbacks for events related to peer data being received
      */
@@ -158,10 +152,45 @@ public class PeerGroup implements TransactionBroadcaster {
             = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<ListenerRegistration<PreMessageReceivedEventListener>> peersPreMessageReceivedEventListeners
             = new CopyOnWriteArrayList<>();
-    protected final CopyOnWriteArrayList<ListenerRegistration<OnTransactionBroadcastListener>> peersTransactionBroadastEventListeners
-            = new CopyOnWriteArrayList<>();
     // Peer discovery sources, will be polled occasionally if there aren't enough inactives.
     private final CopyOnWriteArraySet<PeerDiscovery> peerDiscoverers;
+    private final CopyOnWriteArrayList<Wallet> wallets;
+    private final CopyOnWriteArrayList<PeerFilterProvider> peerFilterProviders;
+    // This event listener is added to every peer. It's here so when we announce transactions via an "inv", every
+    // peer can fetch them.
+    private final PeerListener peerListener = new PeerListener();
+    // Exponential backoff for peers starts at 1 second and maxes at 10 minutes.
+    private final ExponentialBackoff.Params peerBackoffParams = new ExponentialBackoff.Params(1000, 1.5f, 10 * 60 * 1000);
+    // This is a synchronized set, so it locks on itself. We use it to prevent TransactionBroadcast objects from
+    // being garbage collected if nothing in the apps code holds on to them transitively. See the discussion
+    // in broadcastTransaction.
+    private final Set<TransactionBroadcast> runningBroadcasts;
+    private final PeerStartupListener startupListener = new PeerStartupListener();
+    // An object that calculates bloom filters given a list of filter providers, whilst tracking some state useful
+    // for privacy purposes.
+    private final FilterMerger bloomFilterMerger;
+    private final Map<FilterRecalculateMode, SettableFuture<BloomFilter>> inFlightRecalculations = Maps.newHashMap();
+    // By default we don't require any services because any peer will do.
+    private long requiredServices = 0;
+    /**
+     * The default number of connections to the p2p network the library will try to build. This is set to 12 empirically.
+     * It used to be 4, but because we divide the connection pool in two for broadcasting transactions, that meant we
+     * were only sending transactions to two peers and sometimes this wasn't reliable enough: transactions wouldn't
+     * get through.
+     */
+    private volatile int vMaxPeersToDiscoverCount = 100;
+    private volatile long vPeerDiscoveryTimeoutMillis = DEFAULT_PEER_DISCOVERY_TIMEOUT_MILLIS;
+    // Whether the peer group is currently running. Once shut down it cannot be restarted.
+    private volatile boolean vRunning;
+    // Whether the peer group has been started or not. An unstarted PG does not try to access the network.
+    private volatile boolean vUsedUp;
+    // The peer that has been selected for the purposes of downloading announced data.
+    @GuardedBy("lock")
+    private Peer downloadPeer;
+    // Callback for events related to chain download.
+    @Nullable
+    @GuardedBy("lock")
+    private PeerDataEventListener downloadListener;
     // The version message to use for new connections.
     @GuardedBy("lock")
     private VersionMessage versionMessage;
@@ -174,170 +203,151 @@ public class PeerGroup implements TransactionBroadcaster {
     private int maxConnections;
     // Minimum protocol version we will allow ourselves to connect to: require Bloom filtering.
     private volatile int vMinRequiredProtocolVersion;
-
-    /**
-     * How many milliseconds to wait after receiving a pong before sending another ping.
-     */
-    public static final long DEFAULT_PING_INTERVAL_MSEC = 2000;
     @GuardedBy("lock")
     private long pingIntervalMsec = DEFAULT_PING_INTERVAL_MSEC;
-
     @GuardedBy("lock")
     private boolean useLocalhostPeerWhenPossible = true;
     @GuardedBy("lock")
     private boolean ipv6Unreachable = false;
-
     @GuardedBy("lock")
     private long fastCatchupTimeSecs;
-    private final CopyOnWriteArrayList<Wallet> wallets;
-    private final CopyOnWriteArrayList<PeerFilterProvider> peerFilterProviders;
-
-    // This event listener is added to every peer. It's here so when we announce transactions via an "inv", every
-    // peer can fetch them.
-    private final PeerListener peerListener = new PeerListener();
-
     private int minBroadcastConnections = 0;
+    // Tracks failures globally in case of a network failure.
+    @GuardedBy("lock")
+    private ExponentialBackoff groupBackoff = new ExponentialBackoff(new ExponentialBackoff.Params(1000, 1.5f, 10 * 1000));
+    private volatile int vConnectTimeoutMillis = DEFAULT_CONNECT_TIMEOUT_MILLIS;
+    /**
+     * Whether bloom filter support is enabled when using a non FullPrunedBlockchain
+     */
+    private volatile boolean vBloomFilteringEnabled = true;
     private final ScriptsChangeEventListener walletScriptsEventListener = new ScriptsChangeEventListener() {
         @Override
         public void onScriptsChanged(Wallet wallet, List<Script> scripts, boolean isAddingScripts) {
             recalculateFastCatchupAndFilter(FilterRecalculateMode.SEND_IF_CHANGED);
         }
     };
-
     private final KeyChainEventListener walletKeyEventListener = new KeyChainEventListener() {
         @Override
         public void onKeysAdded(List<ECKey> keys) {
             recalculateFastCatchupAndFilter(FilterRecalculateMode.SEND_IF_CHANGED);
         }
     };
-
     private final WalletCoinsReceivedEventListener walletCoinsReceivedEventListener = new WalletCoinsReceivedEventListener() {
         @Override
         public void onCoinsReceived(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
             onCoinsReceivedOrSent(wallet, tx);
         }
     };
-
     private final WalletCoinsSentEventListener walletCoinsSentEventListener = new WalletCoinsSentEventListener() {
         @Override
         public void onCoinsSent(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
             onCoinsReceivedOrSent(wallet, tx);
         }
     };
+    private CountDownLatch executorStartupLatch = new CountDownLatch(1);
+    private LocalhostCheckState localhostCheckState = LocalhostCheckState.NOT_TRIED;
+    @Nullable
+    private volatile ListenableScheduledFuture<?> vPingTask;
+    @GuardedBy("lock")
+    private int stallPeriodSeconds = 10;
+    @GuardedBy("lock")
+    private int stallMinSpeedBytesSec = Block.HEADER_SIZE * 10;
+    @Nullable
+    private ChainDownloadSpeedCalculator chainDownloadSpeedCalculator;
+    private Runnable triggerConnectionsJob = new Runnable() {
+        private final static long MIN_PEER_DISCOVERY_INTERVAL = 1000L;
+        private boolean firstRun = true;
 
-    private void onCoinsReceivedOrSent(Wallet wallet, Transaction tx) {
-        // We received a relevant transaction. We MAY need to recalculate and resend the Bloom filter, but only
-        // if we have received a transaction that includes a relevant P2PK or P2WPKH output.
-        //
-        // The reason is that P2PK and P2WPKH outputs, when spent, will not repeat any data we can predict in their
-        // inputs. So a remote peer will update the Bloom filter for us when such an output is seen matching the
-        // existing filter, so that it includes the tx hash in which the P2PK/P2WPKH output was observed. Thus
-        // the spending transaction will always match (due to the outpoint structure).
-        //
-        // Unfortunately, whilst this is required for correct sync of the chain in blocks, there are two edge cases.
-        //
-        // (1) If a wallet receives a relevant, confirmed P2PK/P2WPKH output that was not broadcast across the network,
-        // for example in a coinbase transaction, then the node that's serving us the chain will update its filter
-        // but the rest will not. If another transaction then spends it, the other nodes won't match/relay it.
-        //
-        // (2) If we receive a P2PK/P2WPKH output broadcast across the network, all currently connected nodes will see
-        // it and update their filter themselves, but any newly connected nodes will receive the last filter we
-        // calculated, which would not include this transaction.
-        //
-        // For this reason we check if the transaction contained any relevant P2PKs or P2WPKHs and force a recalc
-        // and possibly retransmit if so. The recalculation process will end up including the tx hash into the
-        // filter. In case (1), we need to retransmit the filter to the connected peers. In case (2), we don't
-        // and shouldn't, we should just recalculate and cache the new filter for next time.
-        for (TransactionOutput output : tx.getOutputs()) {
-            Script scriptPubKey = output.getScriptPubKey();
-            if (ScriptPattern.isP2PK(scriptPubKey)) {
-                if (output.isMine(wallet)) {
-                    if (tx.getConfidence().getConfidenceType() == TransactionConfidence.ConfidenceType.BUILDING)
-                        recalculateFastCatchupAndFilter(FilterRecalculateMode.SEND_IF_CHANGED);
-                    else
-                        recalculateFastCatchupAndFilter(FilterRecalculateMode.DONT_SEND);
+        @Override
+        public void run() {
+            try {
+                go();
+            } catch (Throwable e) {
+                log.error("Exception when trying to build connections", e);  // The executor swallows exceptions :(
+            }
+        }
+
+        public void go() {
+            if (!vRunning) return;
+
+            boolean doDiscovery = false;
+            long now = Utils.currentTimeMillis();
+            lock.lock();
+            try {
+                // First run: try and use a local node if there is one, for the additional security it can provide.
+                // But, not on Android as there are none for this platform: it could only be a malicious app trying
+                // to hijack our traffic.
+                if (!Utils.isAndroidRuntime() && useLocalhostPeerWhenPossible && maybeCheckForLocalhostPeer() && firstRun) {
+                    log.info("Localhost peer detected, trying to use it instead of P2P discovery");
+                    maxConnections = 0;
+                    connectToLocalHost();
                     return;
                 }
+
+                boolean havePeerWeCanTry = !inactives.isEmpty() && backoffMap.get(inactives.peek()).getRetryTime() <= now;
+                doDiscovery = !havePeerWeCanTry;
+            } finally {
+                firstRun = false;
+                lock.unlock();
+            }
+
+            // Don't hold the lock across discovery as this process can be very slow.
+            boolean discoverySuccess = false;
+            if (doDiscovery) {
+                discoverySuccess = discoverPeers() > 0;
+            }
+
+            lock.lock();
+            try {
+                if (doDiscovery) {
+                    // Require that we have enough connections, to consider this
+                    // a success, or we just constantly test for new peers
+                    if (discoverySuccess && countConnectedAndPendingPeers() >= getMaxConnections()) {
+                        groupBackoff.trackSuccess();
+                    } else {
+                        groupBackoff.trackFailure();
+                    }
+                }
+                // Inactives is sorted by backoffMap time.
+                if (inactives.isEmpty()) {
+                    if (countConnectedAndPendingPeers() < getMaxConnections()) {
+                        long interval = Math.max(groupBackoff.getRetryTime() - now, MIN_PEER_DISCOVERY_INTERVAL);
+                        log.info("Peer discovery didn't provide us any more peers, will try again in "
+                                + interval + "ms.");
+                        executor.schedule(this, interval, TimeUnit.MILLISECONDS);
+                    } else {
+                        // We have enough peers and discovery provided no more, so just settle down. Most likely we
+                        // were given a fixed set of addresses in some test scenario.
+                    }
+                    return;
+                }
+                PeerAddress addrToTry;
+                do {
+                    addrToTry = inactives.poll();
+                } while (ipv6Unreachable && addrToTry.getAddr() instanceof Inet6Address);
+                if (addrToTry == null) {
+                    // We have exhausted the queue of reachable peers, so just settle down.
+                    // Most likely we were given a fixed set of addresses in some test scenario.
+                    return;
+                }
+                long retryTime = backoffMap.get(addrToTry).getRetryTime();
+                retryTime = Math.max(retryTime, groupBackoff.getRetryTime());
+                if (retryTime > now) {
+                    long delay = retryTime - now;
+                    log.info("Waiting {} ms before next connect attempt to {}", delay, addrToTry);
+                    inactives.add(addrToTry);
+                    executor.schedule(this, delay, TimeUnit.MILLISECONDS);
+                    return;
+                }
+                connectTo(addrToTry, false, vConnectTimeoutMillis);
+            } finally {
+                lock.unlock();
+            }
+            if (countConnectedAndPendingPeers() < getMaxConnections()) {
+                executor.execute(this);   // Try next peer immediately.
             }
         }
-    }
-
-    // Exponential backoff for peers starts at 1 second and maxes at 10 minutes.
-    private final ExponentialBackoff.Params peerBackoffParams = new ExponentialBackoff.Params(1000, 1.5f, 10 * 60 * 1000);
-    // Tracks failures globally in case of a network failure.
-    @GuardedBy("lock")
-    private ExponentialBackoff groupBackoff = new ExponentialBackoff(new ExponentialBackoff.Params(1000, 1.5f, 10 * 1000));
-
-    // This is a synchronized set, so it locks on itself. We use it to prevent TransactionBroadcast objects from
-    // being garbage collected if nothing in the apps code holds on to them transitively. See the discussion
-    // in broadcastTransaction.
-    private final Set<TransactionBroadcast> runningBroadcasts;
-
-    private class PeerListener implements GetDataEventListener, BlocksDownloadedEventListener {
-
-        public PeerListener() {
-        }
-
-        @Override
-        public List<Message> getData(Peer peer, GetDataMessage m) {
-            return handleGetData(m);
-        }
-
-        @Override
-        public void onBlocksDownloaded(Peer peer, Block block, @Nullable FilteredBlock filteredBlock, int blocksLeft) {
-            if (chain == null) return;
-            final double rate = chain.getFalsePositiveRate();
-            final double target = bloomFilterMerger.getBloomFilterFPRate() * MAX_FP_RATE_INCREASE;
-            if (rate > target) {
-                // TODO: Avoid hitting this path if the remote peer didn't acknowledge applying a new filter yet.
-                log.info("Force update Bloom filter due to high false positive rate ({} vs {})", rate, target);
-                recalculateFastCatchupAndFilter(FilterRecalculateMode.FORCE_SEND_FOR_REFRESH);
-            }
-        }
-    }
-
-    private class PeerStartupListener implements PeerConnectedEventListener, PeerDisconnectedEventListener {
-        @Override
-        public void onPeerConnected(Peer peer, int peerCount) {
-            handleNewPeer(peer);
-        }
-
-        @Override
-        public void onPeerDisconnected(Peer peer, int peerCount) {
-            // The channel will be automatically removed from channels.
-            handlePeerDeath(peer, null);
-        }
-    }
-
-    private final PeerStartupListener startupListener = new PeerStartupListener();
-
-    /**
-     * The default Bloom filter false positive rate, which is selected to be extremely low such that you hardly ever
-     * download false positives. This provides maximum performance. Although this default can be overridden to push
-     * the FP rate higher, due to <a href="https://groups.google.com/forum/#!msg/bitcoinj/Ys13qkTwcNg/9qxnhwnkeoIJ">
-     * various complexities</a> there are still ways a remote peer can deanonymize the users wallet. This is why the
-     * FP rate is chosen for performance rather than privacy. If a future version of bitcoinj fixes the known
-     * de-anonymization attacks this FP rate may rise again (or more likely, become expressed as a bandwidth allowance).
-     */
-    public static final double DEFAULT_BLOOM_FILTER_FP_RATE = 0.00001;
-    /**
-     * Maximum increase in FP rate before forced refresh of the bloom filter
-     */
-    public static final double MAX_FP_RATE_INCREASE = 10.0f;
-    // An object that calculates bloom filters given a list of filter providers, whilst tracking some state useful
-    // for privacy purposes.
-    private final FilterMerger bloomFilterMerger;
-
-    /**
-     * The default timeout between when a connection attempt begins and version message exchange completes
-     */
-    public static final int DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000;
-    private volatile int vConnectTimeoutMillis = DEFAULT_CONNECT_TIMEOUT_MILLIS;
-
-    /**
-     * Whether bloom filter support is enabled when using a non FullPrunedBlockchain
-     */
-    private volatile boolean vBloomFilteringEnabled = true;
+    };
 
     /**
      * See {@link #PeerGroup(Context)}
@@ -431,7 +441,105 @@ public class PeerGroup implements TransactionBroadcaster {
         vMinRequiredProtocolVersion = params.getProtocolVersionNum(NetworkParameters.ProtocolVersion.BLOOM_FILTER);
     }
 
-    private CountDownLatch executorStartupLatch = new CountDownLatch(1);
+    /**
+     * Register a data event listener against a single peer (i.e. for blockchain
+     * download). Handling registration/deregistration on peer death/add is
+     * outside the scope of these methods.
+     */
+    private static void addDataEventListenerToPeer(Executor executor, Peer peer, PeerDataEventListener downloadListener) {
+        peer.addBlocksDownloadedEventListener(executor, downloadListener);
+        peer.addChainDownloadStartedEventListener(executor, downloadListener);
+        peer.addGetDataEventListener(executor, downloadListener);
+        peer.addPreMessageReceivedEventListener(executor, downloadListener);
+    }
+
+    /**
+     * Remove a registered data event listener against a single peer (i.e. for
+     * blockchain download). Handling registration/deregistration on peer death/add is
+     * outside the scope of these methods.
+     */
+    private static void removeDataEventListenerFromPeer(Peer peer, PeerDataEventListener listener) {
+        peer.removeBlocksDownloadedEventListener(listener);
+        peer.removeChainDownloadStartedEventListener(listener);
+        peer.removeGetDataEventListener(listener);
+        peer.removePreMessageReceivedEventListener(listener);
+    }
+
+    /**
+     * Returns most commonly reported chain height from the given list of {@link Peer}s.
+     * If the most common heights are tied, or no peers are connected, returns {@code 0}.
+     */
+    public static int getMostCommonChainHeight(final List<Peer> peers) {
+        if (peers.isEmpty())
+            return 0;
+        List<Integer> heights = new ArrayList<>(peers.size());
+        for (Peer peer : peers) heights.add((int) peer.getBestHeight());
+        return maxOfMostFreq(heights);
+    }
+
+    static int maxOfMostFreq(List<Integer> items) {
+        if (items.isEmpty())
+            return 0;
+        // This would be much easier in a functional language (or in Java 8).
+        items = Ordering.natural().reverse().sortedCopy(items);
+        LinkedList<Pair> pairs = new LinkedList<>();
+        pairs.add(new Pair(items.get(0)));
+        for (int item : items) {
+            Pair pair = pairs.getLast();
+            if (pair.item != item)
+                pairs.add((pair = new Pair(item)));
+            pair.count++;
+        }
+        // pairs now contains a uniquified list of the sorted inputs, with counts for how often that item appeared.
+        // Now sort by how frequently they occur, and pick the most frequent. If the first place is tied between two,
+        // don't pick any.
+        Collections.sort(pairs);
+        final Pair firstPair = pairs.get(0);
+        if (pairs.size() == 1)
+            return firstPair.item;
+        final Pair secondPair = pairs.get(1);
+        if (firstPair.count > secondPair.count)
+            return firstPair.item;
+        checkState(firstPair.count == secondPair.count);
+        return 0;
+    }
+
+    private void onCoinsReceivedOrSent(Wallet wallet, Transaction tx) {
+        // We received a relevant transaction. We MAY need to recalculate and resend the Bloom filter, but only
+        // if we have received a transaction that includes a relevant P2PK or P2WPKH output.
+        //
+        // The reason is that P2PK and P2WPKH outputs, when spent, will not repeat any data we can predict in their
+        // inputs. So a remote peer will update the Bloom filter for us when such an output is seen matching the
+        // existing filter, so that it includes the tx hash in which the P2PK/P2WPKH output was observed. Thus
+        // the spending transaction will always match (due to the outpoint structure).
+        //
+        // Unfortunately, whilst this is required for correct sync of the chain in blocks, there are two edge cases.
+        //
+        // (1) If a wallet receives a relevant, confirmed P2PK/P2WPKH output that was not broadcast across the network,
+        // for example in a coinbase transaction, then the node that's serving us the chain will update its filter
+        // but the rest will not. If another transaction then spends it, the other nodes won't match/relay it.
+        //
+        // (2) If we receive a P2PK/P2WPKH output broadcast across the network, all currently connected nodes will see
+        // it and update their filter themselves, but any newly connected nodes will receive the last filter we
+        // calculated, which would not include this transaction.
+        //
+        // For this reason we check if the transaction contained any relevant P2PKs or P2WPKHs and force a recalc
+        // and possibly retransmit if so. The recalculation process will end up including the tx hash into the
+        // filter. In case (1), we need to retransmit the filter to the connected peers. In case (2), we don't
+        // and shouldn't, we should just recalculate and cache the new filter for next time.
+        for (TransactionOutput output : tx.getOutputs()) {
+            Script scriptPubKey = output.getScriptPubKey();
+            if (ScriptPattern.isP2PK(scriptPubKey)) {
+                if (output.isMine(wallet)) {
+                    if (tx.getConfidence().getConfidenceType() == TransactionConfidence.ConfidenceType.BUILDING)
+                        recalculateFastCatchupAndFilter(FilterRecalculateMode.SEND_IF_CHANGED);
+                    else
+                        recalculateFastCatchupAndFilter(FilterRecalculateMode.DONT_SEND);
+                    return;
+                }
+            }
+        }
+    }
 
     protected ListeningScheduledExecutorService createPrivateExecutor() {
         ListeningScheduledExecutorService result = MoreExecutors.listeningDecorator(
@@ -456,6 +564,37 @@ public class PeerGroup implements TransactionBroadcaster {
     }
 
     /**
+     * Configure download of pending transaction dependencies. A change of values only takes effect for newly connected
+     * peers.
+     */
+    public void setDownloadTxDependencies(int depth) {
+        lock.lock();
+        try {
+            this.downloadTxDependencyDepth = depth;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void triggerConnections() {
+        // Run on a background thread due to the need to potentially retry and back off in the background.
+        if (!executor.isShutdown())
+            executor.execute(triggerConnectionsJob);
+    }
+
+    /**
+     * The maximum number of connections that we will create to peers.
+     */
+    public int getMaxConnections() {
+        lock.lock();
+        try {
+            return maxConnections;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
      * Adjusts the desired number of connections that we will create to peers. Note that if there are already peers
      * open and the new value is lower than the current number of peers, those connections will be terminated. Likewise
      * if there aren't enough current connections to meet the new requested max size, some will be added.
@@ -476,132 +615,6 @@ public class PeerGroup implements TransactionBroadcaster {
 
         if (adjustment < 0)
             channels.closeConnections(-adjustment);
-    }
-
-    /**
-     * Configure download of pending transaction dependencies. A change of values only takes effect for newly connected
-     * peers.
-     */
-    public void setDownloadTxDependencies(int depth) {
-        lock.lock();
-        try {
-            this.downloadTxDependencyDepth = depth;
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    private Runnable triggerConnectionsJob = new Runnable() {
-        private boolean firstRun = true;
-        private final static long MIN_PEER_DISCOVERY_INTERVAL = 1000L;
-
-        @Override
-        public void run() {
-            try {
-                go();
-            } catch (Throwable e) {
-                log.error("Exception when trying to build connections", e);  // The executor swallows exceptions :(
-            }
-        }
-
-        public void go() {
-            if (!vRunning) return;
-
-            boolean doDiscovery = false;
-            long now = Utils.currentTimeMillis();
-            lock.lock();
-            try {
-                // First run: try and use a local node if there is one, for the additional security it can provide.
-                // But, not on Android as there are none for this platform: it could only be a malicious app trying
-                // to hijack our traffic.
-                if (!Utils.isAndroidRuntime() && useLocalhostPeerWhenPossible && maybeCheckForLocalhostPeer() && firstRun) {
-                    log.info("Localhost peer detected, trying to use it instead of P2P discovery");
-                    maxConnections = 0;
-                    connectToLocalHost();
-                    return;
-                }
-
-                boolean havePeerWeCanTry = !inactives.isEmpty() && backoffMap.get(inactives.peek()).getRetryTime() <= now;
-                doDiscovery = !havePeerWeCanTry;
-            } finally {
-                firstRun = false;
-                lock.unlock();
-            }
-
-            // Don't hold the lock across discovery as this process can be very slow.
-            boolean discoverySuccess = false;
-            if (doDiscovery) {
-                discoverySuccess = discoverPeers() > 0;
-            }
-
-            lock.lock();
-            try {
-                if (doDiscovery) {
-                    // Require that we have enough connections, to consider this
-                    // a success, or we just constantly test for new peers
-                    if (discoverySuccess && countConnectedAndPendingPeers() >= getMaxConnections()) {
-                        groupBackoff.trackSuccess();
-                    } else {
-                        groupBackoff.trackFailure();
-                    }
-                }
-                // Inactives is sorted by backoffMap time.
-                if (inactives.isEmpty()) {
-                    if (countConnectedAndPendingPeers() < getMaxConnections()) {
-                        long interval = Math.max(groupBackoff.getRetryTime() - now, MIN_PEER_DISCOVERY_INTERVAL);
-                        log.info("Peer discovery didn't provide us any more peers, will try again in "
-                                + interval + "ms.");
-                        executor.schedule(this, interval, TimeUnit.MILLISECONDS);
-                    } else {
-                        // We have enough peers and discovery provided no more, so just settle down. Most likely we
-                        // were given a fixed set of addresses in some test scenario.
-                    }
-                    return;
-                }
-                PeerAddress addrToTry;
-                do {
-                    addrToTry = inactives.poll();
-                } while (ipv6Unreachable && addrToTry.getAddr() instanceof Inet6Address);
-                if (addrToTry == null) {
-                    // We have exhausted the queue of reachable peers, so just settle down.
-                    // Most likely we were given a fixed set of addresses in some test scenario.
-                    return;
-                }
-                long retryTime = backoffMap.get(addrToTry).getRetryTime();
-                retryTime = Math.max(retryTime, groupBackoff.getRetryTime());
-                if (retryTime > now) {
-                    long delay = retryTime - now;
-                    log.info("Waiting {} ms before next connect attempt to {}", delay, addrToTry);
-                    inactives.add(addrToTry);
-                    executor.schedule(this, delay, TimeUnit.MILLISECONDS);
-                    return;
-                }
-                connectTo(addrToTry, false, vConnectTimeoutMillis);
-            } finally {
-                lock.unlock();
-            }
-            if (countConnectedAndPendingPeers() < getMaxConnections()) {
-                executor.execute(this);   // Try next peer immediately.
-            }
-        }
-    };
-
-    private void triggerConnections() {
-        // Run on a background thread due to the need to potentially retry and back off in the background.
-        if (!executor.isShutdown())
-            executor.execute(triggerConnectionsJob);
-    }
-
-    /**
-     * The maximum number of connections that we will create to peers.
-     */
-    public int getMaxConnections() {
-        lock.lock();
-        try {
-            return maxConnections;
-        } finally {
-            lock.unlock();
-        }
     }
 
     private List<Message> handleGetData(GetDataMessage m) {
@@ -630,6 +643,18 @@ public class PeerGroup implements TransactionBroadcaster {
     }
 
     /**
+     * Returns the version message provided by setVersionMessage or a default if none was given.
+     */
+    public VersionMessage getVersionMessage() {
+        lock.lock();
+        try {
+            return versionMessage;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
      * Sets the {@link VersionMessage} that will be announced on newly created connections. A version message is
      * primarily interesting because it lets you customize the "subVer" field which is used a bit like the User-Agent
      * field from HTTP. It means your client tells the other side what it is, see
@@ -642,18 +667,6 @@ public class PeerGroup implements TransactionBroadcaster {
         lock.lock();
         try {
             versionMessage = ver;
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    /**
-     * Returns the version message provided by setVersionMessage or a default if none was given.
-     */
-    public VersionMessage getVersionMessage() {
-        lock.lock();
-        try {
-            return versionMessage;
         } finally {
             lock.unlock();
         }
@@ -1109,15 +1122,6 @@ public class PeerGroup implements TransactionBroadcaster {
         }
     }
 
-    private enum LocalhostCheckState {
-        NOT_TRIED,
-        FOUND,
-        FOUND_AND_CONNECTED,
-        NOT_THERE
-    }
-
-    private LocalhostCheckState localhostCheckState = LocalhostCheckState.NOT_TRIED;
-
     private boolean maybeCheckForLocalhostPeer() {
         checkState(lock.isHeldByCurrentThread());
         if (localhostCheckState == LocalhostCheckState.NOT_TRIED) {
@@ -1335,14 +1339,6 @@ public class PeerGroup implements TransactionBroadcaster {
             peer.removeWallet(wallet);
         }
     }
-
-    public enum FilterRecalculateMode {
-        SEND_IF_CHANGED,
-        FORCE_SEND_FOR_REFRESH,
-        DONT_SEND,
-    }
-
-    private final Map<FilterRecalculateMode, SettableFuture<BloomFilter>> inFlightRecalculations = Maps.newHashMap();
 
     /**
      * Recalculates the bloom filter given to peers as well as the timestamp after which full blocks are downloaded
@@ -1571,30 +1567,6 @@ public class PeerGroup implements TransactionBroadcaster {
     }
 
     /**
-     * Register a data event listener against a single peer (i.e. for blockchain
-     * download). Handling registration/deregistration on peer death/add is
-     * outside the scope of these methods.
-     */
-    private static void addDataEventListenerToPeer(Executor executor, Peer peer, PeerDataEventListener downloadListener) {
-        peer.addBlocksDownloadedEventListener(executor, downloadListener);
-        peer.addChainDownloadStartedEventListener(executor, downloadListener);
-        peer.addGetDataEventListener(executor, downloadListener);
-        peer.addPreMessageReceivedEventListener(executor, downloadListener);
-    }
-
-    /**
-     * Remove a registered data event listener against a single peer (i.e. for
-     * blockchain download). Handling registration/deregistration on peer death/add is
-     * outside the scope of these methods.
-     */
-    private static void removeDataEventListenerFromPeer(Peer peer, PeerDataEventListener listener) {
-        peer.removeBlocksDownloadedEventListener(listener);
-        peer.removeChainDownloadStartedEventListener(listener);
-        peer.removeGetDataEventListener(listener);
-        peer.removePreMessageReceivedEventListener(listener);
-    }
-
-    /**
      * Download the blockchain from peers. Convenience that uses a {@link DownloadProgressTracker} for you.<p>
      * <p>
      * This method waits until the download is complete.  "Complete" is defined as downloading
@@ -1676,9 +1648,6 @@ public class PeerGroup implements TransactionBroadcaster {
         }
     }
 
-    @Nullable
-    private volatile ListenableScheduledFuture<?> vPingTask;
-
     @SuppressWarnings("NonAtomicOperationOnVolatileField")
     private void setupPinging() {
         if (getPingIntervalMsec() <= 0)
@@ -1708,33 +1677,6 @@ public class PeerGroup implements TransactionBroadcaster {
         }, getPingIntervalMsec(), getPingIntervalMsec(), TimeUnit.MILLISECONDS);
     }
 
-    private void setDownloadPeer(@Nullable Peer peer) {
-        lock.lock();
-        try {
-            if (downloadPeer == peer)
-                return;
-            if (downloadPeer != null) {
-                log.info("Unsetting download peer: {}", downloadPeer);
-                if (downloadListener != null) {
-                    removeDataEventListenerFromPeer(downloadPeer, downloadListener);
-                }
-                downloadPeer.setDownloadData(false);
-            }
-            downloadPeer = peer;
-            if (downloadPeer != null) {
-                log.info("Setting download peer: {}", downloadPeer);
-                if (downloadListener != null) {
-                    addDataEventListenerToPeer(Threading.SAME_THREAD, peer, downloadListener);
-                }
-                downloadPeer.setDownloadData(true);
-                if (chain != null)
-                    downloadPeer.setDownloadParameters(fastCatchupTimeSecs, bloomFilterMerger.getLastFilter() != null);
-            }
-        } finally {
-            lock.unlock();
-        }
-    }
-
     /**
      * Use "Context.get().getConfidenceTable()" instead
      */
@@ -1742,6 +1684,22 @@ public class PeerGroup implements TransactionBroadcaster {
     @Nullable
     public TxConfidenceTable getMemoryPool() {
         return Context.get().getConfidenceTable();
+    }
+
+    /**
+     * Returns the current fast catchup time. The contents of blocks before this time won't be downloaded as they
+     * cannot contain any interesting transactions. If you use {@link PeerGroup#addWallet(Wallet)} this just returns
+     * the min of the wallets earliest key times.
+     *
+     * @return a time in seconds since the epoch
+     */
+    public long getFastCatchupTimeSecs() {
+        lock.lock();
+        try {
+            return fastCatchupTimeSecs;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -1757,22 +1715,6 @@ public class PeerGroup implements TransactionBroadcaster {
             if (downloadPeer != null) {
                 downloadPeer.setDownloadParameters(secondsSinceEpoch, bloomFilterMerger.getLastFilter() != null);
             }
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    /**
-     * Returns the current fast catchup time. The contents of blocks before this time won't be downloaded as they
-     * cannot contain any interesting transactions. If you use {@link PeerGroup#addWallet(Wallet)} this just returns
-     * the min of the wallets earliest key times.
-     *
-     * @return a time in seconds since the epoch
-     */
-    public long getFastCatchupTimeSecs() {
-        lock.lock();
-        try {
-            return fastCatchupTimeSecs;
         } finally {
             lock.unlock();
         }
@@ -1856,11 +1798,6 @@ public class PeerGroup implements TransactionBroadcaster {
         }
     }
 
-    @GuardedBy("lock")
-    private int stallPeriodSeconds = 10;
-    @GuardedBy("lock")
-    private int stallMinSpeedBytesSec = Block.HEADER_SIZE * 10;
-
     /**
      * Configures the stall speed: the speed at which a peer is considered to be serving us the block chain
      * unacceptably slowly. Once a peer has served us data slower than the given data rate for the given
@@ -1881,138 +1818,6 @@ public class PeerGroup implements TransactionBroadcaster {
             lock.unlock();
         }
     }
-
-    private class ChainDownloadSpeedCalculator implements BlocksDownloadedEventListener, Runnable {
-        private int blocksInLastSecond, txnsInLastSecond, origTxnsInLastSecond;
-        private long bytesInLastSecond;
-
-        // If we take more stalls than this, we assume we're on some kind of terminally slow network and the
-        // stall threshold just isn't set properly. We give up on stall disconnects after that.
-        private int maxStalls = 3;
-
-        // How many seconds the peer has until we start measuring its speed.
-        private int warmupSeconds = -1;
-
-        // Used to calculate a moving average.
-        private long[] samples;
-        private int cursor;
-
-        private boolean syncDone;
-
-        private final Logger log = LoggerFactory.getLogger(ChainDownloadSpeedCalculator.class);
-
-        @Override
-        public synchronized void onBlocksDownloaded(Peer peer, Block block, @Nullable FilteredBlock filteredBlock, int blocksLeft) {
-            blocksInLastSecond++;
-            bytesInLastSecond += Block.HEADER_SIZE;
-            List<Transaction> blockTransactions = block.getTransactions();
-            // This whole area of the type hierarchy is a mess.
-            int txCount = (blockTransactions != null ? countAndMeasureSize(blockTransactions) : 0) +
-                    (filteredBlock != null ? countAndMeasureSize(filteredBlock.getAssociatedTransactions().values()) : 0);
-            txnsInLastSecond = txnsInLastSecond + txCount;
-            if (filteredBlock != null)
-                origTxnsInLastSecond += filteredBlock.getTransactionCount();
-        }
-
-        private int countAndMeasureSize(Collection<Transaction> transactions) {
-            for (Transaction transaction : transactions)
-                bytesInLastSecond += transaction.getMessageSize();
-            return transactions.size();
-        }
-
-        @Override
-        public void run() {
-            try {
-                calculate();
-            } catch (Throwable e) {
-                log.error("Error in speed calculator", e);
-            }
-        }
-
-        private void calculate() {
-            int minSpeedBytesPerSec;
-            int period;
-
-            lock.lock();
-            try {
-                minSpeedBytesPerSec = stallMinSpeedBytesSec;
-                period = stallPeriodSeconds;
-            } finally {
-                lock.unlock();
-            }
-
-            synchronized (this) {
-                if (samples == null || samples.length != period) {
-                    samples = new long[period];
-                    // *2 because otherwise a single low sample could cause an immediate disconnect which is too harsh.
-                    Arrays.fill(samples, minSpeedBytesPerSec * 2);
-                    warmupSeconds = 15;
-                }
-
-                int chainHeight = chain != null ? chain.getBestChainHeight() : -1;
-                int mostCommonChainHeight = getMostCommonChainHeight();
-                if (!syncDone && mostCommonChainHeight > 0 && chainHeight >= mostCommonChainHeight) {
-                    log.info("End of sync detected at height {}.", chainHeight);
-                    syncDone = true;
-                }
-
-                if (!syncDone) {
-                    // Calculate the moving average.
-                    samples[cursor++] = bytesInLastSecond;
-                    if (cursor == samples.length) cursor = 0;
-                    long sampleSum = 0;
-                    for (long sample : samples) sampleSum += sample;
-                    final float average = (float) sampleSum / samples.length;
-
-                    String statsString = String.format(Locale.US,
-                            "%d blocks/sec, %d tx/sec, %d pre-filtered tx/sec, avg/last %.2f/%.2f kilobytes per sec, chain/common height %d/%d",
-                            blocksInLastSecond, txnsInLastSecond, origTxnsInLastSecond, average / 1024.0,
-                            bytesInLastSecond / 1024.0, chainHeight, mostCommonChainHeight);
-                    String thresholdString = String.format(Locale.US, "(threshold <%.2f KB/sec for %d seconds)",
-                            minSpeedBytesPerSec / 1024.0, samples.length);
-                    if (maxStalls <= 0) {
-                        log.info(statsString + ", stall disabled " + thresholdString);
-                    } else if (warmupSeconds > 0) {
-                        warmupSeconds--;
-                        if (bytesInLastSecond > 0)
-                            log.info(statsString
-                                    + String.format(Locale.US, " (warming up %d more seconds)", warmupSeconds));
-                    } else if (average < minSpeedBytesPerSec) {
-                        log.info(statsString + ", STALLED " + thresholdString);
-                        maxStalls--;
-                        if (maxStalls == 0) {
-                            // We could consider starting to drop the Bloom filtering FP rate at this point, because
-                            // we tried a bunch of peers and no matter what we don't seem to be able to go any faster.
-                            // This implies we're bandwidth bottlenecked and might want to start using bandwidth
-                            // more effectively. Of course if there's a MITM that is deliberately throttling us,
-                            // this is a good way to make us take away all the FPs from our Bloom filters ... but
-                            // as they don't give us a whole lot of privacy either way that's not inherently a big
-                            // deal.
-                            log.warn("This network seems to be slower than the requested stall threshold - won't do stall disconnects any more.");
-                        } else {
-                            Peer peer = getDownloadPeer();
-                            log.warn(String.format(Locale.US,
-                                    "Chain download stalled: received %.2f KB/sec for %d seconds, require average of %.2f KB/sec, disconnecting %s, %d stalls left",
-                                    average / 1024.0, samples.length, minSpeedBytesPerSec / 1024.0, peer, maxStalls));
-                            peer.close();
-                            // Reset the sample buffer and give the next peer time to get going.
-                            samples = null;
-                            warmupSeconds = period;
-                        }
-                    } else {
-                        log.info(statsString + ", not stalled " + thresholdString);
-                    }
-                }
-                blocksInLastSecond = 0;
-                txnsInLastSecond = 0;
-                origTxnsInLastSecond = 0;
-                bytesInLastSecond = 0;
-            }
-        }
-    }
-
-    @Nullable
-    private ChainDownloadSpeedCalculator chainDownloadSpeedCalculator;
 
     @VisibleForTesting
     void startBlockChainDownloadFromPeer(Peer peer) {
@@ -2286,18 +2091,18 @@ public class PeerGroup implements TransactionBroadcaster {
     }
 
     /**
+     * The minimum protocol version required: defaults to the version required for Bloom filtering.
+     */
+    public int getMinRequiredProtocolVersion() {
+        return vMinRequiredProtocolVersion;
+    }
+
+    /**
      * If a peer is connected to that claims to speak a protocol version lower than the given version, it will
      * be disconnected and another one will be tried instead.
      */
     public void setMinRequiredProtocolVersion(int minRequiredProtocolVersion) {
         this.vMinRequiredProtocolVersion = minRequiredProtocolVersion;
-    }
-
-    /**
-     * The minimum protocol version required: defaults to the version required for Bloom filtering.
-     */
-    public int getMinRequiredProtocolVersion() {
-        return vMinRequiredProtocolVersion;
     }
 
     /**
@@ -2311,60 +2116,6 @@ public class PeerGroup implements TransactionBroadcaster {
         } finally {
             lock.unlock();
         }
-    }
-
-    /**
-     * Returns most commonly reported chain height from the given list of {@link Peer}s.
-     * If the most common heights are tied, or no peers are connected, returns {@code 0}.
-     */
-    public static int getMostCommonChainHeight(final List<Peer> peers) {
-        if (peers.isEmpty())
-            return 0;
-        List<Integer> heights = new ArrayList<>(peers.size());
-        for (Peer peer : peers) heights.add((int) peer.getBestHeight());
-        return maxOfMostFreq(heights);
-    }
-
-    private static class Pair implements Comparable<Pair> {
-        final int item;
-        int count = 0;
-
-        public Pair(int item) {
-            this.item = item;
-        }
-
-        // note that in this implementation compareTo() is not consistent with equals()
-        @Override
-        public int compareTo(Pair o) {
-            return -Integer.compare(count, o.count);
-        }
-    }
-
-    static int maxOfMostFreq(List<Integer> items) {
-        if (items.isEmpty())
-            return 0;
-        // This would be much easier in a functional language (or in Java 8).
-        items = Ordering.natural().reverse().sortedCopy(items);
-        LinkedList<Pair> pairs = new LinkedList<>();
-        pairs.add(new Pair(items.get(0)));
-        for (int item : items) {
-            Pair pair = pairs.getLast();
-            if (pair.item != item)
-                pairs.add((pair = new Pair(item)));
-            pair.count++;
-        }
-        // pairs now contains a uniquified list of the sorted inputs, with counts for how often that item appeared.
-        // Now sort by how frequently they occur, and pick the most frequent. If the first place is tied between two,
-        // don't pick any.
-        Collections.sort(pairs);
-        final Pair firstPair = pairs.get(0);
-        if (pairs.size() == 1)
-            return firstPair.item;
-        final Pair secondPair = pairs.get(1);
-        if (firstPair.count > secondPair.count)
-            return firstPair.item;
-        checkState(firstPair.count == secondPair.count);
-        return 0;
     }
 
     /**
@@ -2414,6 +2165,33 @@ public class PeerGroup implements TransactionBroadcaster {
         lock.lock();
         try {
             return downloadPeer;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void setDownloadPeer(@Nullable Peer peer) {
+        lock.lock();
+        try {
+            if (downloadPeer == peer)
+                return;
+            if (downloadPeer != null) {
+                log.info("Unsetting download peer: {}", downloadPeer);
+                if (downloadListener != null) {
+                    removeDataEventListenerFromPeer(downloadPeer, downloadListener);
+                }
+                downloadPeer.setDownloadData(false);
+            }
+            downloadPeer = peer;
+            if (downloadPeer != null) {
+                log.info("Setting download peer: {}", downloadPeer);
+                if (downloadListener != null) {
+                    addDataEventListenerToPeer(Threading.SAME_THREAD, peer, downloadListener);
+                }
+                downloadPeer.setDownloadData(true);
+                if (chain != null)
+                    downloadPeer.setDownloadParameters(fastCatchupTimeSecs, bloomFilterMerger.getLastFilter() != null);
+            }
         } finally {
             lock.unlock();
         }
@@ -2470,6 +2248,13 @@ public class PeerGroup implements TransactionBroadcaster {
     }
 
     /**
+     * Returns whether the Bloom filtering protocol optimisation is in use: defaults to true.
+     */
+    public boolean isBloomFilteringEnabled() {
+        return vBloomFilteringEnabled;
+    }
+
+    /**
      * Can be used to disable Bloom filtering entirely, even in SPV mode. You are very unlikely to need this, it is
      * an optimisation for rare cases when full validation is not required but it's still more efficient to download
      * full blocks than filtered blocks.
@@ -2478,10 +2263,191 @@ public class PeerGroup implements TransactionBroadcaster {
         this.vBloomFilteringEnabled = bloomFilteringEnabled;
     }
 
-    /**
-     * Returns whether the Bloom filtering protocol optimisation is in use: defaults to true.
-     */
-    public boolean isBloomFilteringEnabled() {
-        return vBloomFilteringEnabled;
+    private enum LocalhostCheckState {
+        NOT_TRIED,
+        FOUND,
+        FOUND_AND_CONNECTED,
+        NOT_THERE
+    }
+
+    public enum FilterRecalculateMode {
+        SEND_IF_CHANGED,
+        FORCE_SEND_FOR_REFRESH,
+        DONT_SEND,
+    }
+
+    private static class Pair implements Comparable<Pair> {
+        final int item;
+        int count = 0;
+
+        public Pair(int item) {
+            this.item = item;
+        }
+
+        // note that in this implementation compareTo() is not consistent with equals()
+        @Override
+        public int compareTo(Pair o) {
+            return -Integer.compare(count, o.count);
+        }
+    }
+
+    private class PeerListener implements GetDataEventListener, BlocksDownloadedEventListener {
+
+        public PeerListener() {
+        }
+
+        @Override
+        public List<Message> getData(Peer peer, GetDataMessage m) {
+            return handleGetData(m);
+        }
+
+        @Override
+        public void onBlocksDownloaded(Peer peer, Block block, @Nullable FilteredBlock filteredBlock, int blocksLeft) {
+            if (chain == null) return;
+            final double rate = chain.getFalsePositiveRate();
+            final double target = bloomFilterMerger.getBloomFilterFPRate() * MAX_FP_RATE_INCREASE;
+            if (rate > target) {
+                // TODO: Avoid hitting this path if the remote peer didn't acknowledge applying a new filter yet.
+                log.info("Force update Bloom filter due to high false positive rate ({} vs {})", rate, target);
+                recalculateFastCatchupAndFilter(FilterRecalculateMode.FORCE_SEND_FOR_REFRESH);
+            }
+        }
+    }
+
+    private class PeerStartupListener implements PeerConnectedEventListener, PeerDisconnectedEventListener {
+        @Override
+        public void onPeerConnected(Peer peer, int peerCount) {
+            handleNewPeer(peer);
+        }
+
+        @Override
+        public void onPeerDisconnected(Peer peer, int peerCount) {
+            // The channel will be automatically removed from channels.
+            handlePeerDeath(peer, null);
+        }
+    }
+
+    private class ChainDownloadSpeedCalculator implements BlocksDownloadedEventListener, Runnable {
+        private final Logger log = LoggerFactory.getLogger(ChainDownloadSpeedCalculator.class);
+        private int blocksInLastSecond, txnsInLastSecond, origTxnsInLastSecond;
+        private long bytesInLastSecond;
+        // If we take more stalls than this, we assume we're on some kind of terminally slow network and the
+        // stall threshold just isn't set properly. We give up on stall disconnects after that.
+        private int maxStalls = 3;
+        // How many seconds the peer has until we start measuring its speed.
+        private int warmupSeconds = -1;
+        // Used to calculate a moving average.
+        private long[] samples;
+        private int cursor;
+        private boolean syncDone;
+
+        @Override
+        public synchronized void onBlocksDownloaded(Peer peer, Block block, @Nullable FilteredBlock filteredBlock, int blocksLeft) {
+            blocksInLastSecond++;
+            bytesInLastSecond += Block.HEADER_SIZE;
+            List<Transaction> blockTransactions = block.getTransactions();
+            // This whole area of the type hierarchy is a mess.
+            int txCount = (blockTransactions != null ? countAndMeasureSize(blockTransactions) : 0) +
+                    (filteredBlock != null ? countAndMeasureSize(filteredBlock.getAssociatedTransactions().values()) : 0);
+            txnsInLastSecond = txnsInLastSecond + txCount;
+            if (filteredBlock != null)
+                origTxnsInLastSecond += filteredBlock.getTransactionCount();
+        }
+
+        private int countAndMeasureSize(Collection<Transaction> transactions) {
+            for (Transaction transaction : transactions)
+                bytesInLastSecond += transaction.getMessageSize();
+            return transactions.size();
+        }
+
+        @Override
+        public void run() {
+            try {
+                calculate();
+            } catch (Throwable e) {
+                log.error("Error in speed calculator", e);
+            }
+        }
+
+        private void calculate() {
+            int minSpeedBytesPerSec;
+            int period;
+
+            lock.lock();
+            try {
+                minSpeedBytesPerSec = stallMinSpeedBytesSec;
+                period = stallPeriodSeconds;
+            } finally {
+                lock.unlock();
+            }
+
+            synchronized (this) {
+                if (samples == null || samples.length != period) {
+                    samples = new long[period];
+                    // *2 because otherwise a single low sample could cause an immediate disconnect which is too harsh.
+                    Arrays.fill(samples, minSpeedBytesPerSec * 2);
+                    warmupSeconds = 15;
+                }
+
+                int chainHeight = chain != null ? chain.getBestChainHeight() : -1;
+                int mostCommonChainHeight = getMostCommonChainHeight();
+                if (!syncDone && mostCommonChainHeight > 0 && chainHeight >= mostCommonChainHeight) {
+                    log.info("End of sync detected at height {}.", chainHeight);
+                    syncDone = true;
+                }
+
+                if (!syncDone) {
+                    // Calculate the moving average.
+                    samples[cursor++] = bytesInLastSecond;
+                    if (cursor == samples.length) cursor = 0;
+                    long sampleSum = 0;
+                    for (long sample : samples) sampleSum += sample;
+                    final float average = (float) sampleSum / samples.length;
+
+                    String statsString = String.format(Locale.US,
+                            "%d blocks/sec, %d tx/sec, %d pre-filtered tx/sec, avg/last %.2f/%.2f kilobytes per sec, chain/common height %d/%d",
+                            blocksInLastSecond, txnsInLastSecond, origTxnsInLastSecond, average / 1024.0,
+                            bytesInLastSecond / 1024.0, chainHeight, mostCommonChainHeight);
+                    String thresholdString = String.format(Locale.US, "(threshold <%.2f KB/sec for %d seconds)",
+                            minSpeedBytesPerSec / 1024.0, samples.length);
+                    if (maxStalls <= 0) {
+                        log.info(statsString + ", stall disabled " + thresholdString);
+                    } else if (warmupSeconds > 0) {
+                        warmupSeconds--;
+                        if (bytesInLastSecond > 0)
+                            log.info(statsString
+                                    + String.format(Locale.US, " (warming up %d more seconds)", warmupSeconds));
+                    } else if (average < minSpeedBytesPerSec) {
+                        log.info(statsString + ", STALLED " + thresholdString);
+                        maxStalls--;
+                        if (maxStalls == 0) {
+                            // We could consider starting to drop the Bloom filtering FP rate at this point, because
+                            // we tried a bunch of peers and no matter what we don't seem to be able to go any faster.
+                            // This implies we're bandwidth bottlenecked and might want to start using bandwidth
+                            // more effectively. Of course if there's a MITM that is deliberately throttling us,
+                            // this is a good way to make us take away all the FPs from our Bloom filters ... but
+                            // as they don't give us a whole lot of privacy either way that's not inherently a big
+                            // deal.
+                            log.warn("This network seems to be slower than the requested stall threshold - won't do stall disconnects any more.");
+                        } else {
+                            Peer peer = getDownloadPeer();
+                            log.warn(String.format(Locale.US,
+                                    "Chain download stalled: received %.2f KB/sec for %d seconds, require average of %.2f KB/sec, disconnecting %s, %d stalls left",
+                                    average / 1024.0, samples.length, minSpeedBytesPerSec / 1024.0, peer, maxStalls));
+                            peer.close();
+                            // Reset the sample buffer and give the next peer time to get going.
+                            samples = null;
+                            warmupSeconds = period;
+                        }
+                    } else {
+                        log.info(statsString + ", not stalled " + thresholdString);
+                    }
+                }
+                blocksInLastSecond = 0;
+                txnsInLastSecond = 0;
+                origTxnsInLastSecond = 0;
+                bytesInLastSecond = 0;
+            }
+        }
     }
 }

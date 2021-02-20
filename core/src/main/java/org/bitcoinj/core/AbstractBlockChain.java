@@ -90,14 +90,35 @@ import static com.google.common.base.Preconditions.*;
  * 2016 blocks are examined and a new difficulty target is calculated from them.</p>
  */
 public abstract class AbstractBlockChain {
+    /**
+     * False positive estimation uses a double exponential moving average.
+     */
+    public static final double FP_ESTIMATOR_ALPHA = 0.0001;
+    /**
+     * False positive estimation uses a double exponential moving average.
+     */
+    public static final double FP_ESTIMATOR_BETA = 0.01;
     private static final Logger log = LoggerFactory.getLogger(AbstractBlockChain.class);
     protected final ReentrantLock lock = Threading.lock(AbstractBlockChain.class);
-
+    protected final NetworkParameters params;
+    protected final AbstractRuleCheckerFactory ruleCheckerFactory;
     /**
      * Keeps a map of block hashes to StoredBlocks.
      */
     private final BlockStore blockStore;
-
+    // TODO: Scrap this and use a proper read/write for all of the block chain objects.
+    // The chainHead field is read/written synchronized with this object rather than BlockChain. However writing is
+    // also guaranteed to happen whilst BlockChain is synchronized (see setChainHead). The goal of this is to let
+    // clients quickly access the chain head even whilst the block chain is downloading and thus the BlockChain is
+    // locked most of the time.
+    private final Object chainHeadLock = new Object();
+    private final CopyOnWriteArrayList<ListenerRegistration<NewBestBlockListener>> newBestBlockListeners;
+    private final CopyOnWriteArrayList<ListenerRegistration<ReorganizeListener>> reorganizeListeners;
+    private final CopyOnWriteArrayList<ListenerRegistration<TransactionReceivedInBlockListener>> transactionReceivedListeners;
+    // Holds blocks that we have received but can't plug into the chain yet, eg because they were created whilst we
+    // were downloading the block chain.
+    private final LinkedHashMap<Sha256Hash, OrphanBlock> orphanBlocks = new LinkedHashMap<>();
+    private final VersionTally versionTally;
     /**
      * Tracks the top of the best known chain.<p>
      * <p>
@@ -107,54 +128,9 @@ public abstract class AbstractBlockChain {
      * potentially invalidating transactions in our wallet.
      */
     protected StoredBlock chainHead;
-
-    // TODO: Scrap this and use a proper read/write for all of the block chain objects.
-    // The chainHead field is read/written synchronized with this object rather than BlockChain. However writing is
-    // also guaranteed to happen whilst BlockChain is synchronized (see setChainHead). The goal of this is to let
-    // clients quickly access the chain head even whilst the block chain is downloading and thus the BlockChain is
-    // locked most of the time.
-    private final Object chainHeadLock = new Object();
-
-    protected final NetworkParameters params;
-    protected final AbstractRuleCheckerFactory ruleCheckerFactory;
-    private final CopyOnWriteArrayList<ListenerRegistration<NewBestBlockListener>> newBestBlockListeners;
-    private final CopyOnWriteArrayList<ListenerRegistration<ReorganizeListener>> reorganizeListeners;
-    private final CopyOnWriteArrayList<ListenerRegistration<TransactionReceivedInBlockListener>> transactionReceivedListeners;
-
-    // Holds a block header and, optionally, a list of tx hashes or block's transactions
-    class OrphanBlock {
-        final Block block;
-        final List<Sha256Hash> filteredTxHashes;
-        final Map<Sha256Hash, Transaction> filteredTxn;
-
-        OrphanBlock(Block block, @Nullable List<Sha256Hash> filteredTxHashes, @Nullable Map<Sha256Hash, Transaction> filteredTxn) {
-            final boolean filtered = filteredTxHashes != null && filteredTxn != null;
-            Preconditions.checkArgument((block.getTransactions() == null && filtered)
-                    || (block.getTransactions() != null && !filtered));
-            this.block = block;
-            this.filteredTxHashes = filteredTxHashes;
-            this.filteredTxn = filteredTxn;
-        }
-    }
-
-    // Holds blocks that we have received but can't plug into the chain yet, eg because they were created whilst we
-    // were downloading the block chain.
-    private final LinkedHashMap<Sha256Hash, OrphanBlock> orphanBlocks = new LinkedHashMap<>();
-
-    /**
-     * False positive estimation uses a double exponential moving average.
-     */
-    public static final double FP_ESTIMATOR_ALPHA = 0.0001;
-    /**
-     * False positive estimation uses a double exponential moving average.
-     */
-    public static final double FP_ESTIMATOR_BETA = 0.01;
-
     private double falsePositiveRate;
     private double falsePositiveTrend;
     private double previousFalsePositiveRate;
-
-    private final VersionTally versionTally;
 
     /**
      * See {@link #AbstractBlockChain(Context, List, BlockStore)}
@@ -184,6 +160,168 @@ public abstract class AbstractBlockChain {
 
         this.versionTally = new VersionTally(context.getParams());
         this.versionTally.initialize(blockStore, chainHead);
+    }
+
+    private static void informListenerForNewTransactions(Block block, NewBlockType newBlockType,
+                                                         @Nullable List<Sha256Hash> filteredTxHashList,
+                                                         @Nullable Map<Sha256Hash, Transaction> filteredTxn,
+                                                         StoredBlock newStoredBlock, boolean first,
+                                                         TransactionReceivedInBlockListener listener,
+                                                         Set<Sha256Hash> falsePositives) throws VerificationException {
+        if ((filteredTxHashList != null ? filteredTxHashList.size() : 0) > 1) {
+            checkNotNull(filteredTxn);
+            // not the prettiest sorter, but it is very fast in most cases ever encountered here
+            List<Sha256Hash> orderedTxHashList = new ArrayList<>(filteredTxHashList);
+            for (int i = 0; i < filteredTxHashList.size(); i++) {
+                Sha256Hash childHash = filteredTxHashList.get(i);
+                Transaction childTx = filteredTxn.get(childHash);
+                if (childTx == null)
+                    continue;
+
+                for (TransactionInput input : childTx.getInputs()) {
+                    Sha256Hash parentHash = input.getOutpoint().getHash();
+                    // does this transaction's input depend on a transaction in our list?
+                    if (filteredTxHashList.contains(parentHash)) {
+                        Transaction parentTx = filteredTxn.get(parentHash);
+                        if (parentTx == null)
+                            continue;
+
+                        for (TransactionInput parentInput : parentTx.getInputs()) {
+                            Sha256Hash parentParentHash = parentInput.getOutpoint().getHash();
+
+                            if (filteredTxHashList.contains(parentParentHash)) {
+                                int parentIndex = orderedTxHashList.indexOf(parentHash);
+                                if (parentIndex < orderedTxHashList.indexOf(parentParentHash)) {
+                                    // yes; so, remove the parent and place it directly above the child
+                                    orderedTxHashList.remove(parentParentHash);
+                                    orderedTxHashList.add(0, parentParentHash);
+                                    // step back one array element for the next loop, checking this parent is checked for a parent
+                                    i = 0;
+                                }
+                            }
+                        }
+                        // yes; so, does the parent need to be moved above the child?
+                        int childIndex = orderedTxHashList.indexOf(childHash);
+                        if (childIndex < orderedTxHashList.indexOf(parentHash)) {
+                            // yes; so, remove the parent and place it directly above the child
+                            orderedTxHashList.remove(parentHash);
+                            orderedTxHashList.add(childIndex, parentHash);
+                            // step back one array element for the next loop, checking this parent is checked for a parent
+                            i = 0;
+                        }
+                    }
+                }
+            }
+            // all transactions now have their parents above them
+            filteredTxHashList = orderedTxHashList;
+        }
+
+        if (block.getTransactions() != null) {
+            // If this is not the first wallet, ask for the transactions to be duplicated before being given
+            // to the wallet when relevant. This ensures that if we have two connected wallets and a tx that
+            // is relevant to both of them, they don't end up accidentally sharing the same object (which can
+            // result in temporary in-memory corruption during re-orgs). See bug 257. We only duplicate in
+            // the case of multiple wallets to avoid an unnecessary efficiency hit in the common case.
+            sendTransactionsToListener(newStoredBlock, newBlockType, listener, 0, block.getTransactions(),
+                    !first, falsePositives);
+        } else if (filteredTxHashList != null) {
+            checkNotNull(filteredTxn);
+            // We must send transactions to listeners in the order they appeared in the block - thus we iterate over the
+            // set of hashes and call sendTransactionsToListener with individual txn when they have not already been
+            // seen in loose broadcasts - otherwise notifyTransactionIsInBlock on the hash.
+            int relativityOffset = 0;
+            for (Sha256Hash hash : filteredTxHashList) {
+                Transaction tx = filteredTxn.get(hash);
+                if (tx != null) {
+                    sendTransactionsToListener(newStoredBlock, newBlockType, listener, relativityOffset,
+                            Collections.singletonList(tx), !first, falsePositives);
+                } else {
+                    if (listener.notifyTransactionIsInBlock(hash, newStoredBlock, newBlockType, relativityOffset)) {
+                        falsePositives.remove(hash);
+                    }
+                }
+                relativityOffset++;
+            }
+        }
+    }
+
+    /**
+     * Gets the median timestamp of the last 11 blocks
+     */
+    public static long getMedianTimestampOfRecentBlocks(StoredBlock storedBlock,
+                                                        BlockStore store) throws BlockStoreException {
+        long[] timestamps = new long[11];
+        int unused = 9;
+        timestamps[10] = storedBlock.getHeader().getTimeSeconds();
+        while (unused >= 0 && (storedBlock = storedBlock.getPrev(store)) != null)
+            timestamps[unused--] = storedBlock.getHeader().getTimeSeconds();
+
+        Arrays.sort(timestamps, unused + 1, 11);
+        return timestamps[unused + (11 - unused) / 2];
+    }
+
+    /**
+     * Returns the set of contiguous blocks between 'higher' and 'lower'. Higher is included, lower is not.
+     */
+    private static LinkedList<StoredBlock> getPartialChain(StoredBlock higher, StoredBlock lower, BlockStore store) throws BlockStoreException {
+        checkArgument(higher.getHeight() > lower.getHeight(), "higher and lower are reversed");
+        LinkedList<StoredBlock> results = new LinkedList<>();
+        StoredBlock cursor = higher;
+        do {
+            results.add(cursor);
+            cursor = checkNotNull(cursor.getPrev(store), "Ran off the end of the chain");
+        } while (!cursor.equals(lower));
+        return results;
+    }
+
+    /**
+     * Locates the point in the chain at which newStoredBlock and chainHead diverge. Returns null if no split point was
+     * found (ie they are not part of the same chain). Returns newChainHead or chainHead if they don't actually diverge
+     * but are part of the same chain.
+     */
+    private static StoredBlock findSplit(StoredBlock newChainHead, StoredBlock oldChainHead,
+                                         BlockStore store) throws BlockStoreException {
+        StoredBlock currentChainCursor = oldChainHead;
+        StoredBlock newChainCursor = newChainHead;
+        // Loop until we find the block both chains have in common. Example:
+        //
+        //    A -> B -> C -> D
+        //         \--> E -> F -> G
+        //
+        // findSplit will return block B. oldChainHead = D and newChainHead = G.
+        while (!currentChainCursor.equals(newChainCursor)) {
+            if (currentChainCursor.getHeight() > newChainCursor.getHeight()) {
+                currentChainCursor = currentChainCursor.getPrev(store);
+                checkNotNull(currentChainCursor, "Attempt to follow an orphan chain");
+            } else {
+                newChainCursor = newChainCursor.getPrev(store);
+                checkNotNull(newChainCursor, "Attempt to follow an orphan chain");
+            }
+        }
+        return currentChainCursor;
+    }
+
+    private static void sendTransactionsToListener(StoredBlock block, NewBlockType blockType,
+                                                   TransactionReceivedInBlockListener listener,
+                                                   int relativityOffset,
+                                                   List<Transaction> transactions,
+                                                   boolean clone,
+                                                   Set<Sha256Hash> falsePositives) throws VerificationException {
+        for (Transaction tx : transactions) {
+            try {
+                falsePositives.remove(tx.getTxId());
+                if (clone)
+                    tx = tx.params.getDefaultSerializer().makeTransaction(tx.bitcoinSerialize());
+                listener.receiveFromBlock(tx, block, blockType, relativityOffset++);
+            } catch (ScriptException e) {
+                // We don't want scripts we don't understand to break the block chain so just note that this tx was
+                // not scanned here and continue.
+                log.warn("Failed to parse a script: " + e.toString());
+            } catch (ProtocolException e) {
+                // Failed to duplicate tx, should never happen.
+                throw new RuntimeException(e);
+            }
+        }
     }
 
     /**
@@ -733,104 +871,6 @@ public abstract class AbstractBlockChain {
         trackFalsePositives(falsePositives.size());
     }
 
-    private static void informListenerForNewTransactions(Block block, NewBlockType newBlockType,
-                                                         @Nullable List<Sha256Hash> filteredTxHashList,
-                                                         @Nullable Map<Sha256Hash, Transaction> filteredTxn,
-                                                         StoredBlock newStoredBlock, boolean first,
-                                                         TransactionReceivedInBlockListener listener,
-                                                         Set<Sha256Hash> falsePositives) throws VerificationException {
-        if ((filteredTxHashList != null ? filteredTxHashList.size() : 0) > 1) {
-            checkNotNull(filteredTxn);
-            // not the prettiest sorter, but it is very fast in most cases ever encountered here
-            List<Sha256Hash> orderedTxHashList = new ArrayList<>(filteredTxHashList);
-            for (int i = 0; i < filteredTxHashList.size(); i++) {
-                Sha256Hash childHash = filteredTxHashList.get(i);
-                Transaction childTx = filteredTxn.get(childHash);
-                if (childTx == null)
-                    continue;
-
-                for (TransactionInput input : childTx.getInputs()) {
-                    Sha256Hash parentHash = input.getOutpoint().getHash();
-                    // does this transaction's input depend on a transaction in our list?
-                    if (filteredTxHashList.contains(parentHash)) {
-                        Transaction parentTx = filteredTxn.get(parentHash);
-                        if (parentTx == null)
-                            continue;
-
-                        for (TransactionInput parentInput : parentTx.getInputs()) {
-                            Sha256Hash parentParentHash = parentInput.getOutpoint().getHash();
-
-                            if (filteredTxHashList.contains(parentParentHash)) {
-                                int parentIndex = orderedTxHashList.indexOf(parentHash);
-                                if (parentIndex < orderedTxHashList.indexOf(parentParentHash)) {
-                                    // yes; so, remove the parent and place it directly above the child
-                                    orderedTxHashList.remove(parentParentHash);
-                                    orderedTxHashList.add(0, parentParentHash);
-                                    // step back one array element for the next loop, checking this parent is checked for a parent
-                                    i = 0;
-                                }
-                            }
-                        }
-                        // yes; so, does the parent need to be moved above the child?
-                        int childIndex = orderedTxHashList.indexOf(childHash);
-                        if (childIndex < orderedTxHashList.indexOf(parentHash)) {
-                            // yes; so, remove the parent and place it directly above the child
-                            orderedTxHashList.remove(parentHash);
-                            orderedTxHashList.add(childIndex, parentHash);
-                            // step back one array element for the next loop, checking this parent is checked for a parent
-                            i = 0;
-                        }
-                    }
-                }
-            }
-            // all transactions now have their parents above them
-            filteredTxHashList = orderedTxHashList;
-        }
-
-        if (block.getTransactions() != null) {
-            // If this is not the first wallet, ask for the transactions to be duplicated before being given
-            // to the wallet when relevant. This ensures that if we have two connected wallets and a tx that
-            // is relevant to both of them, they don't end up accidentally sharing the same object (which can
-            // result in temporary in-memory corruption during re-orgs). See bug 257. We only duplicate in
-            // the case of multiple wallets to avoid an unnecessary efficiency hit in the common case.
-            sendTransactionsToListener(newStoredBlock, newBlockType, listener, 0, block.getTransactions(),
-                    !first, falsePositives);
-        } else if (filteredTxHashList != null) {
-            checkNotNull(filteredTxn);
-            // We must send transactions to listeners in the order they appeared in the block - thus we iterate over the
-            // set of hashes and call sendTransactionsToListener with individual txn when they have not already been
-            // seen in loose broadcasts - otherwise notifyTransactionIsInBlock on the hash.
-            int relativityOffset = 0;
-            for (Sha256Hash hash : filteredTxHashList) {
-                Transaction tx = filteredTxn.get(hash);
-                if (tx != null) {
-                    sendTransactionsToListener(newStoredBlock, newBlockType, listener, relativityOffset,
-                            Collections.singletonList(tx), !first, falsePositives);
-                } else {
-                    if (listener.notifyTransactionIsInBlock(hash, newStoredBlock, newBlockType, relativityOffset)) {
-                        falsePositives.remove(hash);
-                    }
-                }
-                relativityOffset++;
-            }
-        }
-    }
-
-    /**
-     * Gets the median timestamp of the last 11 blocks
-     */
-    public static long getMedianTimestampOfRecentBlocks(StoredBlock storedBlock,
-                                                        BlockStore store) throws BlockStoreException {
-        long[] timestamps = new long[11];
-        int unused = 9;
-        timestamps[10] = storedBlock.getHeader().getTimeSeconds();
-        while (unused >= 0 && (storedBlock = storedBlock.getPrev(store)) != null)
-            timestamps[unused--] = storedBlock.getHeader().getTimeSeconds();
-
-        Arrays.sort(timestamps, unused + 1, 11);
-        return timestamps[unused + (11 - unused) / 2];
-    }
-
     /**
      * Disconnect each transaction in the block (after reading it from the block store)
      * Only called if(shouldVerifyTransactions())
@@ -920,86 +960,10 @@ public abstract class AbstractBlockChain {
     }
 
     /**
-     * Returns the set of contiguous blocks between 'higher' and 'lower'. Higher is included, lower is not.
-     */
-    private static LinkedList<StoredBlock> getPartialChain(StoredBlock higher, StoredBlock lower, BlockStore store) throws BlockStoreException {
-        checkArgument(higher.getHeight() > lower.getHeight(), "higher and lower are reversed");
-        LinkedList<StoredBlock> results = new LinkedList<>();
-        StoredBlock cursor = higher;
-        do {
-            results.add(cursor);
-            cursor = checkNotNull(cursor.getPrev(store), "Ran off the end of the chain");
-        } while (!cursor.equals(lower));
-        return results;
-    }
-
-    /**
-     * Locates the point in the chain at which newStoredBlock and chainHead diverge. Returns null if no split point was
-     * found (ie they are not part of the same chain). Returns newChainHead or chainHead if they don't actually diverge
-     * but are part of the same chain.
-     */
-    private static StoredBlock findSplit(StoredBlock newChainHead, StoredBlock oldChainHead,
-                                         BlockStore store) throws BlockStoreException {
-        StoredBlock currentChainCursor = oldChainHead;
-        StoredBlock newChainCursor = newChainHead;
-        // Loop until we find the block both chains have in common. Example:
-        //
-        //    A -> B -> C -> D
-        //         \--> E -> F -> G
-        //
-        // findSplit will return block B. oldChainHead = D and newChainHead = G.
-        while (!currentChainCursor.equals(newChainCursor)) {
-            if (currentChainCursor.getHeight() > newChainCursor.getHeight()) {
-                currentChainCursor = currentChainCursor.getPrev(store);
-                checkNotNull(currentChainCursor, "Attempt to follow an orphan chain");
-            } else {
-                newChainCursor = newChainCursor.getPrev(store);
-                checkNotNull(newChainCursor, "Attempt to follow an orphan chain");
-            }
-        }
-        return currentChainCursor;
-    }
-
-    /**
      * @return the height of the best known chain, convenience for {@code getChainHead().getHeight()}.
      */
     public final int getBestChainHeight() {
         return getChainHead().getHeight();
-    }
-
-    public enum NewBlockType {
-        BEST_CHAIN,
-        SIDE_CHAIN
-    }
-
-    private static void sendTransactionsToListener(StoredBlock block, NewBlockType blockType,
-                                                   TransactionReceivedInBlockListener listener,
-                                                   int relativityOffset,
-                                                   List<Transaction> transactions,
-                                                   boolean clone,
-                                                   Set<Sha256Hash> falsePositives) throws VerificationException {
-        for (Transaction tx : transactions) {
-            try {
-                falsePositives.remove(tx.getTxId());
-                if (clone)
-                    tx = tx.params.getDefaultSerializer().makeTransaction(tx.bitcoinSerialize());
-                listener.receiveFromBlock(tx, block, blockType, relativityOffset++);
-            } catch (ScriptException e) {
-                // We don't want scripts we don't understand to break the block chain so just note that this tx was
-                // not scanned here and continue.
-                log.warn("Failed to parse a script: " + e.toString());
-            } catch (ProtocolException e) {
-                // Failed to duplicate tx, should never happen.
-                throw new RuntimeException(e);
-            }
-        }
-    }
-
-    protected void setChainHead(StoredBlock chainHead) throws BlockStoreException {
-        doSetChainHead(chainHead);
-        synchronized (chainHeadLock) {
-            this.chainHead = chainHead;
-        }
     }
 
     /**
@@ -1047,6 +1011,13 @@ public abstract class AbstractBlockChain {
     public StoredBlock getChainHead() {
         synchronized (chainHeadLock) {
             return chainHead;
+        }
+    }
+
+    protected void setChainHead(StoredBlock chainHead) throws BlockStoreException {
+        doSetChainHead(chainHead);
+        synchronized (chainHeadLock) {
+            this.chainHead = chainHead;
         }
     }
 
@@ -1120,7 +1091,6 @@ public abstract class AbstractBlockChain {
         return result;
     }
 
-
     /**
      * The false positive rate is the average over all blockchain transactions of:
      * <p>
@@ -1184,5 +1154,26 @@ public abstract class AbstractBlockChain {
 
     protected VersionTally getVersionTally() {
         return versionTally;
+    }
+
+    public enum NewBlockType {
+        BEST_CHAIN,
+        SIDE_CHAIN
+    }
+
+    // Holds a block header and, optionally, a list of tx hashes or block's transactions
+    class OrphanBlock {
+        final Block block;
+        final List<Sha256Hash> filteredTxHashes;
+        final Map<Sha256Hash, Transaction> filteredTxn;
+
+        OrphanBlock(Block block, @Nullable List<Sha256Hash> filteredTxHashes, @Nullable Map<Sha256Hash, Transaction> filteredTxn) {
+            final boolean filtered = filteredTxHashes != null && filteredTxn != null;
+            Preconditions.checkArgument((block.getTransactions() == null && filtered)
+                    || (block.getTransactions() != null && !filtered));
+            this.block = block;
+            this.filteredTxHashes = filteredTxHashes;
+            this.filteredTxn = filteredTxn;
+        }
     }
 }

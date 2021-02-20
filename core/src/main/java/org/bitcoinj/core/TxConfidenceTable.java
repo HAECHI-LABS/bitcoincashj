@@ -40,17 +40,11 @@ import static com.google.common.base.Preconditions.checkNotNull;
  * all transactions not currently included in the best chain - it's simply a cache.</p>
  */
 public class TxConfidenceTable {
+    /**
+     * The max size of a table created with the no-args constructor.
+     */
+    public static final int MAX_SIZE = 1000;
     protected final ReentrantLock lock = Threading.lock(TxConfidenceTable.class);
-
-    private static class WeakConfidenceReference extends WeakReference<TransactionConfidence> {
-        public Sha256Hash hash;
-
-        public WeakConfidenceReference(TransactionConfidence confidence, ReferenceQueue<TransactionConfidence> queue) {
-            super(confidence, queue);
-            hash = confidence.getTransactionHash();
-        }
-    }
-
     private final Map<Sha256Hash, WeakConfidenceReference> table;
     private final TransactionConfidence.Factory confidenceFactory;
 
@@ -60,11 +54,6 @@ public class TxConfidenceTable {
     // transactions you actually care to track the confidence of. We can still end up with lots of hashes being stored
     // if our peers flood us with invs but the MAX_SIZE param caps this.
     private ReferenceQueue<TransactionConfidence> referenceQueue;
-
-    /**
-     * The max size of a table created with the no-args constructor.
-     */
-    public static final int MAX_SIZE = 1000;
 
     /**
      * Creates a table that will track at most the given number of transactions (allowing you to bound memory
@@ -202,6 +191,15 @@ public class TxConfidenceTable {
             return confidence;
         } finally {
             lock.unlock();
+        }
+    }
+
+    private static class WeakConfidenceReference extends WeakReference<TransactionConfidence> {
+        public Sha256Hash hash;
+
+        public WeakConfidenceReference(TransactionConfidence confidence, ReferenceQueue<TransactionConfidence> queue) {
+            super(confidence, queue);
+            hash = confidence.getTransactionHash();
         }
     }
 }

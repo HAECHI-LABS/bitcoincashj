@@ -38,9 +38,10 @@ import java.util.Set;
  * <p>Instances of this class are not safe for use by multiple threads.</p>
  */
 public class AlertMessage extends Message {
+    // Chosen arbitrarily to avoid memory blowups.
+    private static final long MAX_SET_SIZE = 100;
     private byte[] content;
     private byte[] signature;
-
     // See the getters for documentation of what each field means.
     private long version = 1;
     private Date relayUntil;
@@ -50,9 +51,6 @@ public class AlertMessage extends Message {
     private long minVer, maxVer;
     private long priority;
     private String comment, statusBar, reserved;
-
-    // Chosen arbitrarily to avoid memory blowups.
-    private static final long MAX_SET_SIZE = 100;
 
     public AlertMessage(NetworkParameters params, byte[] payloadBytes) throws ProtocolException {
         super(params, payloadBytes, 0);

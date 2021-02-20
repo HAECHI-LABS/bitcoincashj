@@ -17,12 +17,9 @@
 package org.bitcoinj.examples;
 
 import org.bitcoinj.core.NetworkParameters;
-import org.bitcoinj.core.TransactionConfidence;
 import org.bitcoinj.crypto.DeterministicKey;
 import org.bitcoinj.kits.MultisigAppKit;
-import org.bitcoinj.kits.WalletAppKit;
 import org.bitcoinj.params.MainNetParams;
-import org.bitcoinj.params.TestNet3Params;
 import org.bitcoinj.wallet.DeterministicKeyChain;
 
 import java.io.File;

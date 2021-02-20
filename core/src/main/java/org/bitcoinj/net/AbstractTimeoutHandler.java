@@ -25,13 +25,12 @@ import java.util.TimerTask;
  * </p>
  */
 public abstract class AbstractTimeoutHandler {
+    // A timer which manages expiring channels as their timeouts occur (if configured).
+    private static final Timer timeoutTimer = new Timer("AbstractTimeoutHandler timeouts", true);
     // TimerTask and timeout value which are added to a timer to kill the connection on timeout
     private TimerTask timeoutTask;
     private long timeoutMillis = 0;
     private boolean timeoutEnabled = true;
-
-    // A timer which manages expiring channels as their timeouts occur (if configured).
-    private static final Timer timeoutTimer = new Timer("AbstractTimeoutHandler timeouts", true);
 
     /**
      * <p>Enables or disables the timeout entirely. This may be useful if you want to store the timeout value but wish

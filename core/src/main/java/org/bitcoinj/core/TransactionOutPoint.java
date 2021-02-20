@@ -40,7 +40,10 @@ import static com.google.common.base.Preconditions.checkState;
 public class TransactionOutPoint extends ChildMessage {
 
     static final int MESSAGE_LENGTH = 36;
-
+    // This is not part of bitcoin serialization. It points to the connected transaction.
+    Transaction fromTx;
+    // The connected output.
+    TransactionOutput connectedOutput;
     /**
      * Hash of the transaction to which we refer.
      */
@@ -49,12 +52,6 @@ public class TransactionOutPoint extends ChildMessage {
      * Which output of that transaction we are talking about.
      */
     private long index;
-
-    // This is not part of bitcoin serialization. It points to the connected transaction.
-    Transaction fromTx;
-
-    // The connected output.
-    TransactionOutput connectedOutput;
 
     public TransactionOutPoint(NetworkParameters params, long index, @Nullable Transaction fromTx) {
         super(params);

@@ -3,16 +3,10 @@ package org.bitcoinj.core.slp;
 import org.bitcoinj.core.TransactionOutput;
 
 public class SlpUTXO {
-    public enum SlpUtxoType {
-        NORMAL,
-        MINT_BATON
-    }
-
     private String tokenId;
     private long tokenAmount;
     private TransactionOutput txUtxo;
     private SlpUtxoType slpUtxoType;
-
     public SlpUTXO(String tokenId, long rawAmount, TransactionOutput txUtxo, SlpUtxoType slpUtxoType) {
         this.tokenId = tokenId;
         this.tokenAmount = rawAmount;
@@ -34,5 +28,10 @@ public class SlpUTXO {
 
     public SlpUtxoType getSlpUtxoType() {
         return this.slpUtxoType;
+    }
+
+    public enum SlpUtxoType {
+        NORMAL,
+        MINT_BATON
     }
 }

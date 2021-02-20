@@ -43,22 +43,44 @@ import static com.google.common.base.Preconditions.checkState;
  */
 public class TransactionBroadcast {
     private static final Logger log = LoggerFactory.getLogger(TransactionBroadcast.class);
-
+    /**
+     * Used for shuffling the peers before broadcast: unit tests can replace this to make themselves deterministic.
+     */
+    @VisibleForTesting
+    public static Random random = new Random();
     private final SettableFuture<Transaction> future = SettableFuture.create();
     private final PeerGroup peerGroup;
     private final Transaction tx;
     private int minConnections;
     private boolean dropPeersAfterBroadcast = false;
     private int numWaitingFor;
-
-    /**
-     * Used for shuffling the peers before broadcast: unit tests can replace this to make themselves deterministic.
-     */
-    @VisibleForTesting
-    public static Random random = new Random();
-
     // Tracks which nodes sent us a reject message about this broadcast, if any. Useful for debugging.
     private Map<Peer, RejectMessage> rejects = Collections.synchronizedMap(new HashMap<Peer, RejectMessage>());
+    private PreMessageReceivedEventListener rejectionListener = new PreMessageReceivedEventListener() {
+        @Override
+        public Message onPreMessageReceived(Peer peer, Message m) {
+            if (m instanceof RejectMessage) {
+                RejectMessage rejectMessage = (RejectMessage) m;
+                if (tx.getTxId().equals(rejectMessage.getRejectedObjectHash())) {
+                    rejects.put(peer, rejectMessage);
+                    int size = rejects.size();
+                    long threshold = Math.round(numWaitingFor / 2.0);
+                    if (size > threshold) {
+                        log.warn("Threshold for considering broadcast rejected has been reached ({}/{})", size, threshold);
+                        future.setException(new RejectedTransactionException(tx, rejectMessage));
+                        peerGroup.removePreMessageReceivedEventListener(this);
+                    }
+                }
+            }
+            return m;
+        }
+    };
+    private int numSeemPeers;
+    private boolean mined;
+    @Nullable
+    private ProgressCallback callback;
+    @Nullable
+    private Executor progressCallbackExecutor;
 
     TransactionBroadcast(PeerGroup peerGroup, Transaction tx) {
         this.peerGroup = peerGroup;
@@ -99,31 +121,89 @@ public class TransactionBroadcast {
         this.dropPeersAfterBroadcast = dropPeersAfterBroadcast;
     }
 
-    private PreMessageReceivedEventListener rejectionListener = new PreMessageReceivedEventListener() {
-        @Override
-        public Message onPreMessageReceived(Peer peer, Message m) {
-            if (m instanceof RejectMessage) {
-                RejectMessage rejectMessage = (RejectMessage) m;
-                if (tx.getTxId().equals(rejectMessage.getRejectedObjectHash())) {
-                    rejects.put(peer, rejectMessage);
-                    int size = rejects.size();
-                    long threshold = Math.round(numWaitingFor / 2.0);
-                    if (size > threshold) {
-                        log.warn("Threshold for considering broadcast rejected has been reached ({}/{})", size, threshold);
-                        future.setException(new RejectedTransactionException(tx, rejectMessage));
-                        peerGroup.removePreMessageReceivedEventListener(this);
-                    }
-                }
-            }
-            return m;
-        }
-    };
-
     public ListenableFuture<Transaction> broadcast() {
         peerGroup.addPreMessageReceivedEventListener(Threading.SAME_THREAD, rejectionListener);
         log.info("Waiting for {} peers required for broadcast, we have {} ...", minConnections, peerGroup.getConnectedPeers().size());
         peerGroup.waitForPeers(minConnections).addListener(new EnoughAvailablePeers(), Threading.SAME_THREAD);
         return future;
+    }
+
+    private void invokeAndRecord(int numSeenPeers, boolean mined) {
+        synchronized (this) {
+            this.numSeemPeers = numSeenPeers;
+            this.mined = mined;
+        }
+        invokeProgressCallback(numSeenPeers, mined);
+    }
+
+    private void invokeProgressCallback(int numSeenPeers, boolean mined) {
+        final ProgressCallback callback;
+        Executor executor;
+        synchronized (this) {
+            callback = this.callback;
+            executor = this.progressCallbackExecutor;
+        }
+        if (callback != null) {
+            final double progress = Math.min(1.0, mined ? 1.0 : numSeenPeers / (double) numWaitingFor);
+            checkState(progress >= 0.0 && progress <= 1.0, progress);
+            try {
+                if (executor == null)
+                    callback.onBroadcastProgress(progress);
+                else
+                    executor.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            callback.onBroadcastProgress(progress);
+                        }
+                    });
+            } catch (Throwable e) {
+                log.error("Exception during progress callback", e);
+            }
+        }
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    /**
+     * Sets the given callback for receiving progress values, which will run on the user thread. See
+     * {@link Threading} for details.  If the broadcast has already started then the callback will
+     * be invoked immediately with the current progress.
+     */
+    public void setProgressCallback(ProgressCallback callback) {
+        setProgressCallback(callback, Threading.USER_THREAD);
+    }
+
+    /**
+     * Sets the given callback for receiving progress values, which will run on the given executor. If the executor
+     * is null then the callback will run on a network thread and may be invoked multiple times in parallel. You
+     * probably want to provide your UI thread or Threading.USER_THREAD for the second parameter. If the broadcast
+     * has already started then the callback will be invoked immediately with the current progress.
+     */
+    public void setProgressCallback(ProgressCallback callback, @Nullable Executor executor) {
+        boolean shouldInvoke;
+        int num;
+        boolean mined;
+        synchronized (this) {
+            this.callback = callback;
+            this.progressCallbackExecutor = executor;
+            num = this.numSeemPeers;
+            mined = this.mined;
+            shouldInvoke = numWaitingFor > 0;
+        }
+        if (shouldInvoke)
+            invokeProgressCallback(num, mined);
+    }
+    /**
+     * An interface for receiving progress information on the propagation of the tx, from 0.0 to 1.0
+     */
+    public interface ProgressCallback {
+        /**
+         * onBroadcastProgress will be invoked on the provided executor when the progress of the transaction
+         * broadcast has changed, because the transaction has been announced by another peer or because the transaction
+         * was found inside a mined block (in this case progress will go to 1.0 immediately). Any exceptions thrown
+         * by this callback will be logged and ignored.
+         */
+        void onBroadcastProgress(double progress);
     }
 
     private class EnoughAvailablePeers implements Runnable {
@@ -186,9 +266,6 @@ public class TransactionBroadcast {
         }
     }
 
-    private int numSeemPeers;
-    private boolean mined;
-
     private class ConfidenceChange implements TransactionConfidence.Listener {
         @Override
         public void onConfidenceChanged(TransactionConfidence conf, ChangeReason reason) {
@@ -221,89 +298,5 @@ public class TransactionBroadcast {
                 future.set(tx);  // RE-ENTRANCY POINT
             }
         }
-    }
-
-    private void invokeAndRecord(int numSeenPeers, boolean mined) {
-        synchronized (this) {
-            this.numSeemPeers = numSeenPeers;
-            this.mined = mined;
-        }
-        invokeProgressCallback(numSeenPeers, mined);
-    }
-
-    private void invokeProgressCallback(int numSeenPeers, boolean mined) {
-        final ProgressCallback callback;
-        Executor executor;
-        synchronized (this) {
-            callback = this.callback;
-            executor = this.progressCallbackExecutor;
-        }
-        if (callback != null) {
-            final double progress = Math.min(1.0, mined ? 1.0 : numSeenPeers / (double) numWaitingFor);
-            checkState(progress >= 0.0 && progress <= 1.0, progress);
-            try {
-                if (executor == null)
-                    callback.onBroadcastProgress(progress);
-                else
-                    executor.execute(new Runnable() {
-                        @Override
-                        public void run() {
-                            callback.onBroadcastProgress(progress);
-                        }
-                    });
-            } catch (Throwable e) {
-                log.error("Exception during progress callback", e);
-            }
-        }
-    }
-
-    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    /**
-     * An interface for receiving progress information on the propagation of the tx, from 0.0 to 1.0
-     */
-    public interface ProgressCallback {
-        /**
-         * onBroadcastProgress will be invoked on the provided executor when the progress of the transaction
-         * broadcast has changed, because the transaction has been announced by another peer or because the transaction
-         * was found inside a mined block (in this case progress will go to 1.0 immediately). Any exceptions thrown
-         * by this callback will be logged and ignored.
-         */
-        void onBroadcastProgress(double progress);
-    }
-
-    @Nullable
-    private ProgressCallback callback;
-    @Nullable
-    private Executor progressCallbackExecutor;
-
-    /**
-     * Sets the given callback for receiving progress values, which will run on the user thread. See
-     * {@link Threading} for details.  If the broadcast has already started then the callback will
-     * be invoked immediately with the current progress.
-     */
-    public void setProgressCallback(ProgressCallback callback) {
-        setProgressCallback(callback, Threading.USER_THREAD);
-    }
-
-    /**
-     * Sets the given callback for receiving progress values, which will run on the given executor. If the executor
-     * is null then the callback will run on a network thread and may be invoked multiple times in parallel. You
-     * probably want to provide your UI thread or Threading.USER_THREAD for the second parameter. If the broadcast
-     * has already started then the callback will be invoked immediately with the current progress.
-     */
-    public void setProgressCallback(ProgressCallback callback, @Nullable Executor executor) {
-        boolean shouldInvoke;
-        int num;
-        boolean mined;
-        synchronized (this) {
-            this.callback = callback;
-            this.progressCallbackExecutor = executor;
-            num = this.numSeemPeers;
-            mined = this.mined;
-            shouldInvoke = numWaitingFor > 0;
-        }
-        if (shouldInvoke)
-            invokeProgressCallback(num, mined);
     }
 }

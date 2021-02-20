@@ -17,8 +17,6 @@
 
 package org.bitcoinj.core;
 
-import com.google.common.primitives.UnsignedBytes;
-
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;

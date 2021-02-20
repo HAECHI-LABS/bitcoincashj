@@ -6,20 +6,6 @@ import java.security.MessageDigest;
 
 public class HashHelper {
 
-    public String getCashAccountCollision(String block, String txHash) {
-        String collisionNumber;
-        String concatenatedTest = block.toLowerCase() + txHash.toLowerCase();
-        String hashedConcatenated = SHA256_Hex(concatenatedTest);
-        String firstFourBytes = hashedConcatenated.substring(0, 8);
-        long decimalNotation = getUnsignedInt(hexToDecimal(firstFourBytes));
-        String reverseDecimalNotation = new StringBuilder(decimalNotation + "").reverse().toString();
-        String paddedDecimal = padString(reverseDecimalNotation);
-        collisionNumber = paddedDecimal;
-
-        return collisionNumber;
-
-    }
-
     private static String SHA256_Hex(String value) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -34,6 +20,20 @@ public class HashHelper {
         StringBuilder result = new StringBuilder();
         for (byte b : bytes) result.append(Integer.toString((b & 0xff) + 0x100, 16).substring(1));
         return result.toString();
+    }
+
+    public String getCashAccountCollision(String block, String txHash) {
+        String collisionNumber;
+        String concatenatedTest = block.toLowerCase() + txHash.toLowerCase();
+        String hashedConcatenated = SHA256_Hex(concatenatedTest);
+        String firstFourBytes = hashedConcatenated.substring(0, 8);
+        long decimalNotation = getUnsignedInt(hexToDecimal(firstFourBytes));
+        String reverseDecimalNotation = new StringBuilder(decimalNotation + "").reverse().toString();
+        String paddedDecimal = padString(reverseDecimalNotation);
+        collisionNumber = paddedDecimal;
+
+        return collisionNumber;
+
     }
 
     private int hexToDecimal(String hex) {

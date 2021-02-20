@@ -101,33 +101,6 @@ public class PartialMerkleTree extends Message {
         return new PartialMerkleTree(params, bits, hashes, allLeafHashes.size());
     }
 
-    @Override
-    public void bitcoinSerializeToStream(OutputStream stream) throws IOException {
-        uint32ToByteStreamLE(transactionCount, stream);
-
-        stream.write(new VarInt(hashes.size()).encode());
-        for (Sha256Hash hash : hashes)
-            stream.write(hash.getReversedBytes());
-
-        stream.write(new VarInt(matchedChildBits.length).encode());
-        stream.write(matchedChildBits);
-    }
-
-    @Override
-    protected void parse() throws ProtocolException {
-        transactionCount = (int) readUint32();
-
-        int nHashes = (int) readVarInt();
-        hashes = new ArrayList<>(Math.min(nHashes, Utils.MAX_INITIAL_ARRAY_LENGTH));
-        for (int i = 0; i < nHashes; i++)
-            hashes.add(readHash());
-
-        int nFlagBytes = (int) readVarInt();
-        matchedChildBits = readBytes(nFlagBytes);
-
-        length = cursor - offset;
-    }
-
     // Based on CPartialMerkleTree::TraverseAndBuild in Bitcoin Core.
     private static void traverseAndBuild(int height, int pos, List<Sha256Hash> allLeafHashes, byte[] includeBits,
                                          List<Boolean> matchedChildBits, List<Sha256Hash> resultHashes) {
@@ -177,8 +150,35 @@ public class PartialMerkleTree extends Message {
         return (transactionCount + (1 << height) - 1) >> height;
     }
 
-    private static class ValuesUsed {
-        public int bitsUsed = 0, hashesUsed = 0;
+    private static Sha256Hash combineLeftRight(byte[] left, byte[] right) {
+        return Sha256Hash.wrapReversed(Sha256Hash.hashTwice(reverseBytes(left), reverseBytes(right)));
+    }
+
+    @Override
+    public void bitcoinSerializeToStream(OutputStream stream) throws IOException {
+        uint32ToByteStreamLE(transactionCount, stream);
+
+        stream.write(new VarInt(hashes.size()).encode());
+        for (Sha256Hash hash : hashes)
+            stream.write(hash.getReversedBytes());
+
+        stream.write(new VarInt(matchedChildBits.length).encode());
+        stream.write(matchedChildBits);
+    }
+
+    @Override
+    protected void parse() throws ProtocolException {
+        transactionCount = (int) readUint32();
+
+        int nHashes = (int) readVarInt();
+        hashes = new ArrayList<>(Math.min(nHashes, Utils.MAX_INITIAL_ARRAY_LENGTH));
+        for (int i = 0; i < nHashes; i++)
+            hashes.add(readHash());
+
+        int nFlagBytes = (int) readVarInt();
+        matchedChildBits = readBytes(nFlagBytes);
+
+        length = cursor - offset;
     }
 
     // recursive function that traverses tree nodes, consuming the bits and hashes produced by TraverseAndBuild.
@@ -212,10 +212,6 @@ public class PartialMerkleTree extends Message {
             // and combine them before returning
             return combineLeftRight(left, right);
         }
-    }
-
-    private static Sha256Hash combineLeftRight(byte[] left, byte[] right) {
-        return Sha256Hash.wrapReversed(Sha256Hash.hashTwice(reverseBytes(left), reverseBytes(right)));
     }
 
     /**
@@ -285,5 +281,9 @@ public class PartialMerkleTree extends Message {
                 ", matchedChildBits=" + Arrays.toString(matchedChildBits) +
                 ", hashes=" + hashes +
                 '}';
+    }
+
+    private static class ValuesUsed {
+        public int bitsUsed = 0, hashesUsed = 0;
     }
 }

@@ -41,43 +41,17 @@ public abstract class AbstractBitcoinNetParams extends NetworkParameters {
     public static final int MAX_BITS = 0x1d00ffff;
     public static final String MAX_BITS_STRING = "1d00ffff";
     public static final BigInteger MAX_TARGET = Utils.decodeCompactBits(MAX_BITS);
-
+    private static final Logger log = LoggerFactory.getLogger(AbstractBitcoinNetParams.class);
     /**
      * The number that is one greater than the largest representable SHA-256
      * hash.
      */
     private static BigInteger LARGEST_HASH = BigInteger.ONE.shiftLeft(256);
 
-    private static final Logger log = LoggerFactory.getLogger(AbstractBitcoinNetParams.class);
-
     public AbstractBitcoinNetParams() {
         super();
         interval = TARGET_TIMESPAN / TARGET_SPACING;
         subsidyDecreaseBlockCount = 210000;
-    }
-
-    /**
-     * Checks if we are at a reward halving point.
-     *
-     * @param previousHeight The height of the previous stored block
-     * @return If this is a reward halving point
-     */
-    public final boolean isRewardHalvingPoint(final int previousHeight) {
-        return ((previousHeight + 1) % REWARD_HALVING_INTERVAL) == 0;
-    }
-
-    /**
-     * <p>A utility method that calculates how much new Bitcoin would be created by the block at the given height.
-     * The inflation of Bitcoin is predictable and drops roughly every 4 years (210,000 blocks). At the dawn of
-     * the system it was 50 coins per block, in late 2012 it went to 25 coins per block, and so on. The size of
-     * a coinbase transaction is inflation plus fees.</p>
-     *
-     * <p>The half-life is controlled by {@link NetworkParameters#getSubsidyDecreaseBlockCount()}.</p>
-     *
-     * @param height the height of the block to calculate inflation for
-     */
-    public Coin getBlockInflation(int height) {
-        return Coin.FIFTY_COINS.shiftRight(height / getSubsidyDecreaseBlockCount());
     }
 
     /**
@@ -239,6 +213,30 @@ public abstract class AbstractBitcoinNetParams extends NetworkParameters {
             e.printStackTrace();
         }
         return false;
+    }
+
+    /**
+     * Checks if we are at a reward halving point.
+     *
+     * @param previousHeight The height of the previous stored block
+     * @return If this is a reward halving point
+     */
+    public final boolean isRewardHalvingPoint(final int previousHeight) {
+        return ((previousHeight + 1) % REWARD_HALVING_INTERVAL) == 0;
+    }
+
+    /**
+     * <p>A utility method that calculates how much new Bitcoin would be created by the block at the given height.
+     * The inflation of Bitcoin is predictable and drops roughly every 4 years (210,000 blocks). At the dawn of
+     * the system it was 50 coins per block, in late 2012 it went to 25 coins per block, and so on. The size of
+     * a coinbase transaction is inflation plus fees.</p>
+     *
+     * <p>The half-life is controlled by {@link NetworkParameters#getSubsidyDecreaseBlockCount()}.</p>
+     *
+     * @param height the height of the block to calculate inflation for
+     */
+    public Coin getBlockInflation(int height) {
+        return Coin.FIFTY_COINS.shiftRight(height / getSubsidyDecreaseBlockCount());
     }
 
     @Override

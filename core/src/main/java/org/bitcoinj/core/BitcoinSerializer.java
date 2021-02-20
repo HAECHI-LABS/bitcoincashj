@@ -46,11 +46,6 @@ import static org.bitcoinj.core.Utils.*;
 public class BitcoinSerializer extends MessageSerializer {
     private static final Logger log = LoggerFactory.getLogger(BitcoinSerializer.class);
     private static final int COMMAND_LEN = 12;
-
-    private final NetworkParameters params;
-    private final int protocolVersion;
-    private final boolean parseRetain;
-
     private static final Map<Class<? extends Message>, String> names = new HashMap<>();
 
     static {
@@ -76,6 +71,10 @@ public class BitcoinSerializer extends MessageSerializer {
         names.put(UTXOsMessage.class, "utxos");
         names.put(SendHeadersMessage.class, "sendheaders");
     }
+
+    private final NetworkParameters params;
+    private final int protocolVersion;
+    private final boolean parseRetain;
 
     /**
      * Constructs a BitcoinSerializer with the given behavior.
@@ -368,6 +367,20 @@ public class BitcoinSerializer extends MessageSerializer {
         return parseRetain;
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || !(o instanceof BitcoinSerializer)) return false;
+        BitcoinSerializer other = (BitcoinSerializer) o;
+        return Objects.equals(params, other.params) &&
+                protocolVersion == other.protocolVersion &&
+                parseRetain == other.parseRetain;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(params, protocolVersion, parseRetain);
+    }
 
     public static class BitcoinPacketHeader {
         /**
@@ -406,20 +419,5 @@ public class BitcoinSerializer extends MessageSerializer {
             System.arraycopy(header, cursor, checksum, 0, 4);
             cursor += 4;
         }
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || !(o instanceof BitcoinSerializer)) return false;
-        BitcoinSerializer other = (BitcoinSerializer) o;
-        return Objects.equals(params, other.params) &&
-                protocolVersion == other.protocolVersion &&
-                parseRetain == other.parseRetain;
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(params, protocolVersion, parseRetain);
     }
 }

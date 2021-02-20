@@ -149,6 +149,30 @@ public class TransactionSignature extends ECKey.ECDSASignature {
         return lenS <= 1 || signature[6 + lenR] != 0x00 || (signature[6 + lenR + 1] & 0x80) == 0x80; // S value excessively padded
     }
 
+    /**
+     * Returns a decoded signature.
+     *
+     * @param requireCanonicalEncoding if the encoding of the signature must
+     *                                 be canonical.
+     * @param requireCanonicalSValue   if the S-value must be canonical (below half
+     *                                 the order of the curve).
+     * @throws SignatureDecodeException if the signature is unparseable in some way.
+     * @throws VerificationException    if the signature is invalid.
+     */
+    public static TransactionSignature decodeFromBitcoin(byte[] bytes, boolean requireCanonicalEncoding,
+                                                         boolean requireCanonicalSValue) throws SignatureDecodeException, VerificationException {
+        // Bitcoin encoding is DER signature + sighash byte.
+        if (requireCanonicalEncoding && !isEncodingCanonical(bytes))
+            throw new VerificationException.NoncanonicalSignature();
+        ECKey.ECDSASignature sig = ECKey.ECDSASignature.decodeFromDER(bytes);
+        if (requireCanonicalSValue && !sig.isCanonical())
+            throw new VerificationException("S-value is not canonical.");
+
+        // In Bitcoin, any value of the final byte is valid, but not necessarily canonical. See javadocs for
+        // isEncodingCanonical to learn more about this. So we must store the exact byte found.
+        return new TransactionSignature(sig.r, sig.s, bytes[bytes.length - 1]);
+    }
+
     public boolean useForkId() {
         return (sighashFlags & SigHash.FORKID.value) != 0;
     }
@@ -185,29 +209,5 @@ public class TransactionSignature extends ECKey.ECDSASignature {
     @Override
     public ECKey.ECDSASignature toCanonicalised() {
         return new TransactionSignature(super.toCanonicalised(), sigHashMode(), anyoneCanPay(), useForkId());
-    }
-
-    /**
-     * Returns a decoded signature.
-     *
-     * @param requireCanonicalEncoding if the encoding of the signature must
-     *                                 be canonical.
-     * @param requireCanonicalSValue   if the S-value must be canonical (below half
-     *                                 the order of the curve).
-     * @throws SignatureDecodeException if the signature is unparseable in some way.
-     * @throws VerificationException    if the signature is invalid.
-     */
-    public static TransactionSignature decodeFromBitcoin(byte[] bytes, boolean requireCanonicalEncoding,
-                                                         boolean requireCanonicalSValue) throws SignatureDecodeException, VerificationException {
-        // Bitcoin encoding is DER signature + sighash byte.
-        if (requireCanonicalEncoding && !isEncodingCanonical(bytes))
-            throw new VerificationException.NoncanonicalSignature();
-        ECKey.ECDSASignature sig = ECKey.ECDSASignature.decodeFromDER(bytes);
-        if (requireCanonicalSValue && !sig.isCanonical())
-            throw new VerificationException("S-value is not canonical.");
-
-        // In Bitcoin, any value of the final byte is valid, but not necessarily canonical. See javadocs for
-        // isEncodingCanonical to learn more about this. So we must store the exact byte found.
-        return new TransactionSignature(sig.r, sig.s, bytes[bytes.length - 1]);
     }
 }

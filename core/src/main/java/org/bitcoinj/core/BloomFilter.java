@@ -45,30 +45,15 @@ import static java.lang.Math.*;
  * <p>Instances of this class are not safe for use by multiple threads.</p>
  */
 public class BloomFilter extends Message {
-    /**
-     * The BLOOM_UPDATE_* constants control when the bloom filter is auto-updated by the peer using
-     * it as a filter, either never, for all outputs or only for P2PK outputs (default)
-     */
-    public enum BloomUpdate {
-        UPDATE_NONE, // 0
-        UPDATE_ALL, // 1
-        /**
-         * Only adds outpoints to the filter if the output is a P2PK/pay-to-multisig script
-         */
-        UPDATE_P2PUBKEY_ONLY //2
-    }
-
-    private byte[] data;
-    private long hashFuncs;
-    private long nTweak;
-    private byte nFlags;
-
     // Same value as Bitcoin Core
     // A filter of 20,000 items and a false positive rate of 0.1% or one of 10,000 items and 0.0001% is just under 36,000 bytes
     private static final long MAX_FILTER_SIZE = 36000;
     // There is little reason to ever have more hash functions than 50 given a limit of 36,000 bytes
     private static final int MAX_HASH_FUNCS = 50;
-
+    private byte[] data;
+    private long hashFuncs;
+    private long nTweak;
+    private byte nFlags;
     /**
      * Construct a BloomFilter by deserializing payloadBytes
      */
@@ -123,47 +108,6 @@ public class BloomFilter extends Message {
         hashFuncs = max(1, min(hashFuncs, MAX_HASH_FUNCS));
         this.nTweak = randomNonce;
         this.nFlags = (byte) (0xff & updateFlag.ordinal());
-    }
-
-    /**
-     * Returns the theoretical false positive rate of this filter if were to contain the given number of elements.
-     */
-    public double getFalsePositiveRate(int elements) {
-        return pow(1 - pow(E, -1.0 * (hashFuncs * elements) / (data.length * 8)), hashFuncs);
-    }
-
-    @Override
-    public String toString() {
-        final MoreObjects.ToStringHelper helper = MoreObjects.toStringHelper(this).omitNullValues();
-        helper.add("data length", data.length);
-        helper.add("hashFuncs", hashFuncs);
-        helper.add("nFlags", getUpdateFlag());
-        return helper.toString();
-    }
-
-    @Override
-    protected void parse() throws ProtocolException {
-        data = readByteArray();
-        if (data.length > MAX_FILTER_SIZE)
-            throw new ProtocolException("Bloom filter out of size range.");
-        hashFuncs = readUint32();
-        if (hashFuncs > MAX_HASH_FUNCS)
-            throw new ProtocolException("Bloom filter hash function count out of range");
-        nTweak = readUint32();
-        nFlags = readBytes(1)[0];
-        length = cursor - offset;
-    }
-
-    /**
-     * Serializes this message to the provided stream. If you just want the raw bytes use bitcoinSerialize().
-     */
-    @Override
-    protected void bitcoinSerializeToStream(OutputStream stream) throws IOException {
-        stream.write(new VarInt(data.length).encode());
-        stream.write(data);
-        Utils.uint32ToByteStreamLE(hashFuncs, stream);
-        Utils.uint32ToByteStreamLE(nTweak, stream);
-        stream.write(nFlags);
     }
 
     private static int rotateLeft32(int x, int r) {
@@ -225,6 +169,47 @@ public class BloomFilter extends Message {
         h1 ^= h1 >>> 16;
 
         return (int) ((h1 & 0xFFFFFFFFL) % (data.length * 8));
+    }
+
+    /**
+     * Returns the theoretical false positive rate of this filter if were to contain the given number of elements.
+     */
+    public double getFalsePositiveRate(int elements) {
+        return pow(1 - pow(E, -1.0 * (hashFuncs * elements) / (data.length * 8)), hashFuncs);
+    }
+
+    @Override
+    public String toString() {
+        final MoreObjects.ToStringHelper helper = MoreObjects.toStringHelper(this).omitNullValues();
+        helper.add("data length", data.length);
+        helper.add("hashFuncs", hashFuncs);
+        helper.add("nFlags", getUpdateFlag());
+        return helper.toString();
+    }
+
+    @Override
+    protected void parse() throws ProtocolException {
+        data = readByteArray();
+        if (data.length > MAX_FILTER_SIZE)
+            throw new ProtocolException("Bloom filter out of size range.");
+        hashFuncs = readUint32();
+        if (hashFuncs > MAX_HASH_FUNCS)
+            throw new ProtocolException("Bloom filter hash function count out of range");
+        nTweak = readUint32();
+        nFlags = readBytes(1)[0];
+        length = cursor - offset;
+    }
+
+    /**
+     * Serializes this message to the provided stream. If you just want the raw bytes use bitcoinSerialize().
+     */
+    @Override
+    protected void bitcoinSerializeToStream(OutputStream stream) throws IOException {
+        stream.write(new VarInt(data.length).encode());
+        stream.write(data);
+        Utils.uint32ToByteStreamLE(hashFuncs, stream);
+        Utils.uint32ToByteStreamLE(nTweak, stream);
+        stream.write(nFlags);
     }
 
     /**
@@ -383,5 +368,18 @@ public class BloomFilter extends Message {
     @Override
     public synchronized int hashCode() {
         return Objects.hash(hashFuncs, nTweak, Arrays.hashCode(data));
+    }
+
+    /**
+     * The BLOOM_UPDATE_* constants control when the bloom filter is auto-updated by the peer using
+     * it as a filter, either never, for all outputs or only for P2PK outputs (default)
+     */
+    public enum BloomUpdate {
+        UPDATE_NONE, // 0
+        UPDATE_ALL, // 1
+        /**
+         * Only adds outpoints to the filter if the output is a P2PK/pay-to-multisig script
+         */
+        UPDATE_P2PUBKEY_ONLY //2
     }
 }

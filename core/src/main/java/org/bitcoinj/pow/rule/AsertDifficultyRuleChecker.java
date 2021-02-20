@@ -52,7 +52,7 @@ public class AsertDifficultyRuleChecker extends AbstractPowRulesChecker {
             BigInteger referenceBlockAncestorTime = BigInteger.ZERO;
             BigInteger referenceBlockHeight = BigInteger.ZERO;
             BigInteger referenceBlockBits = BigInteger.ZERO;
-            if(!networkParameters.getAsertReferenceBlockAncestorTime().equals(BigInteger.ZERO)) {
+            if (!networkParameters.getAsertReferenceBlockAncestorTime().equals(BigInteger.ZERO)) {
                 referenceBlockAncestorTime = networkParameters.getAsertReferenceBlockAncestorTime();
                 referenceBlockHeight = networkParameters.getAsertReferenceBlockHeight();
                 referenceBlockBits = Utils.decodeCompactBits(networkParameters.getAsertReferenceBlockBits());

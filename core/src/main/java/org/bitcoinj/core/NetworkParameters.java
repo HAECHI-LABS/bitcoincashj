@@ -97,7 +97,25 @@ public abstract class NetworkParameters {
     public static final String PAYMENT_PROTOCOL_ID_REGTEST = "regtest";
 
     // TODO: Seed nodes should be here as well.
-
+    public static final int TARGET_TIMESPAN = 14 * 24 * 60 * 60;  // 2 weeks per difficulty cycle, on average.
+    public static final int TARGET_SPACING = 10 * 60;  // 10 minutes per block.
+    public static final BigInteger TARGET_SPACING_BIGINT = BigInteger.valueOf(10L * 60L);  // 10 minutes per block.
+    /**
+     * Blocks with a timestamp after this should enforce BIP 16, aka "Pay to script hash". This BIP changed the
+     * network rules in a soft-forking manner, that is, blocks that don't follow the rules are accepted but not
+     * mined upon and thus will be quickly re-orged out as long as the majority are enforcing the rule.
+     */
+    public static final int BIP16_ENFORCE_TIME = 1333238400;
+    /**
+     * The maximum number of coins to be generated
+     */
+    public static final long MAX_COINS = 21000000;
+    /**
+     * The maximum money to be generated
+     */
+    public static final Coin MAX_MONEY = COIN.multiply(MAX_COINS);
+    // Nov, 15 2018 hard fork
+    protected static long november2018ActivationTime = 1542300000L;
     protected final Block genesisBlock;
     protected BigInteger maxTarget;
     protected int port;
@@ -112,22 +130,18 @@ public abstract class NetworkParameters {
     protected byte[] alertSigningKey;
     protected int bip32HeaderP2PKHpub;
     protected int bip32HeaderP2PKHpriv;
-
     /**
      * Used to check majorities for block version upgrade
      */
     protected int majorityEnforceBlockUpgrade;
     protected int majorityRejectBlockOutdated;
     protected int majorityWindow;
-
     // Aug, 1 2017 hard fork
     protected int uahfHeight;
     // Nov, 13 2017 hard fork
     protected int daaUpdateHeight;
     // May, 15 2018 hard fork
     protected long monolithActivationTime = 1526400000L;
-    // Nov, 15 2018 hard fork
-    protected static long november2018ActivationTime = 1542300000L;
     // Nov, 15 2020 hard fork
     protected long asertUpdateTime;
     /**
@@ -135,13 +149,11 @@ public abstract class NetworkParameters {
      * by looking at the port number.
      */
     protected String id;
-
     /**
      * The depth of blocks required for a coinbase transaction to be spendable.
      */
     protected int spendableCoinbaseDepth;
     protected int subsidyDecreaseBlockCount;
-
     protected String[] dnsSeeds;
     protected int[] addrSeeds;
     protected HttpDiscovery.Details[] httpSeeds = {};
@@ -190,48 +202,6 @@ public abstract class NetworkParameters {
         return genesisBlock;
     }
 
-    public static final int TARGET_TIMESPAN = 14 * 24 * 60 * 60;  // 2 weeks per difficulty cycle, on average.
-    public static final int TARGET_SPACING = 10 * 60;  // 10 minutes per block.
-    public static final BigInteger TARGET_SPACING_BIGINT = BigInteger.valueOf(10L * 60L);  // 10 minutes per block.
-
-    /**
-     * Blocks with a timestamp after this should enforce BIP 16, aka "Pay to script hash". This BIP changed the
-     * network rules in a soft-forking manner, that is, blocks that don't follow the rules are accepted but not
-     * mined upon and thus will be quickly re-orged out as long as the majority are enforcing the rule.
-     */
-    public static final int BIP16_ENFORCE_TIME = 1333238400;
-
-    /**
-     * The maximum number of coins to be generated
-     */
-    public static final long MAX_COINS = 21000000;
-
-    /**
-     * The maximum money to be generated
-     */
-    public static final Coin MAX_MONEY = COIN.multiply(MAX_COINS);
-
-    /**
-     * A Java package style string acting as unique ID for these parameters
-     */
-    public String getId() {
-        return id;
-    }
-
-    public abstract String getPaymentProtocolId();
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        return getId().equals(((NetworkParameters) o).getId());
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(getId());
-    }
-
     /**
      * Returns the network parameters for the given string ID or NULL if not recognized.
      */
@@ -273,6 +243,27 @@ public abstract class NetworkParameters {
         } else {
             return null;
         }
+    }
+
+    /**
+     * A Java package style string acting as unique ID for these parameters
+     */
+    public String getId() {
+        return id;
+    }
+
+    public abstract String getPaymentProtocolId();
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        return getId().equals(((NetworkParameters) o).getId());
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(getId());
     }
 
     public int getSpendableCoinbaseDepth() {

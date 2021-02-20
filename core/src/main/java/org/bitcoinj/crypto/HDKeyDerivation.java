@@ -33,6 +33,14 @@ import static com.google.common.base.Preconditions.checkState;
  * deterministic wallet child key generation algorithm.
  */
 public final class HDKeyDerivation {
+    /**
+     * Child derivation may fail (although with extremely low probability); in such case it is re-attempted.
+     * This is the maximum number of re-attempts (to avoid an infinite loop in case of bugs etc.).
+     */
+    public static final int MAX_CHILD_DERIVATION_ATTEMPTS = 100;
+    // Some arbitrary random number. Doesn't matter what it is.
+    private static final BigInteger RAND_INT;
+
     static {
         // Init proper random number generator, as some old Android installations have bugs that make it unsecure.
         if (Utils.isAndroidRuntime())
@@ -41,17 +49,8 @@ public final class HDKeyDerivation {
         RAND_INT = new BigInteger(256, new SecureRandom());
     }
 
-    // Some arbitrary random number. Doesn't matter what it is.
-    private static final BigInteger RAND_INT;
-
     private HDKeyDerivation() {
     }
-
-    /**
-     * Child derivation may fail (although with extremely low probability); in such case it is re-attempted.
-     * This is the maximum number of re-attempts (to avoid an infinite loop in case of bugs etc.).
-     */
-    public static final int MAX_CHILD_DERIVATION_ATTEMPTS = 100;
 
     /**
      * Generates a new deterministic key from the given seed, which can be any arbitrary byte array. However resist
@@ -168,11 +167,6 @@ public final class HDKeyDerivation {
         return new RawKeyBytes(ki.toByteArray(), chainCode);
     }
 
-    public enum PublicDeriveMode {
-        NORMAL,
-        WITH_INVERSION
-    }
-
     public static DeterministicKey deriveChildKeyFromPublic(DeterministicKey parent, ChildNumber childNumber,
                                                             PublicDeriveMode mode) throws HDDerivationException {
         RawKeyBytes rawKey = deriveChildKeyBytesFromPublic(parent, childNumber, PublicDeriveMode.NORMAL);
@@ -231,6 +225,11 @@ public final class HDKeyDerivation {
     private static void assertLessThanN(BigInteger integer, String errorMessage) {
         if (integer.compareTo(ECKey.CURVE.getN()) > 0)
             throw new HDDerivationException(errorMessage);
+    }
+
+    public enum PublicDeriveMode {
+        NORMAL,
+        WITH_INVERSION
     }
 
     public static class RawKeyBytes {

@@ -28,6 +28,8 @@ import static com.google.common.base.Preconditions.checkState;
  */
 public class RegTestParams extends AbstractBitcoinNetParams {
     private static final BigInteger MAX_TARGET = new BigInteger("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", 16);
+    private static Block genesis;
+    private static RegTestParams instance;
 
     public RegTestParams() {
         super();
@@ -63,12 +65,17 @@ public class RegTestParams extends AbstractBitcoinNetParams {
         maxBlockSigops = maxBlockSize / 50;
     }
 
+    public static synchronized RegTestParams get() {
+        if (instance == null) {
+            instance = new RegTestParams();
+        }
+        return instance;
+    }
+
     @Override
     public boolean allowEmptyPeerChain() {
         return true;
     }
-
-    private static Block genesis;
 
     @Override
     public Block getGenesisBlock() {
@@ -82,15 +89,6 @@ public class RegTestParams extends AbstractBitcoinNetParams {
             }
             return genesis;
         }
-    }
-
-    private static RegTestParams instance;
-
-    public static synchronized RegTestParams get() {
-        if (instance == null) {
-            instance = new RegTestParams();
-        }
-        return instance;
     }
 
     @Override

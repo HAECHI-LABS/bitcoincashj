@@ -38,22 +38,17 @@ import static com.google.common.base.Preconditions.checkArgument;
 
 public class SlpAddress extends Address {
 
-    public enum CashAddressType {
-        PubKey(0),
-        Script(1);
+    private CashAddressType addressType;
 
-        private int value;
-
-        CashAddressType(int value) {
-            this.value = value;
-        }
-
-        public byte getValue() {
-            return (byte) value;
-        }
+    public SlpAddress(NetworkParameters params, CashAddressType addressType, byte[] hash) {
+        super(params, getLegacyVersion(params, addressType), hash);
+        this.addressType = addressType;
     }
 
-    private CashAddressType addressType;
+    public SlpAddress(NetworkParameters params, int version, byte[] hash160) {
+        super(params, version, hash160);
+        this.addressType = getType(params, version);
+    }
 
     static int getLegacyVersion(NetworkParameters params, CashAddressType type) {
         switch (type) {
@@ -72,16 +67,6 @@ public class SlpAddress extends Address {
             return CashAddressType.Script;
         }
         throw new AddressFormatException("Invalid Cash address version: " + version);
-    }
-
-    public SlpAddress(NetworkParameters params, CashAddressType addressType, byte[] hash) {
-        super(params, getLegacyVersion(params, addressType), hash);
-        this.addressType = addressType;
-    }
-
-    public SlpAddress(NetworkParameters params, int version, byte[] hash160) {
-        super(params, version, hash160);
-        this.addressType = getType(params, version);
     }
 
     /**
@@ -107,6 +92,22 @@ public class SlpAddress extends Address {
     }
 
     /**
+     * Given an address, examines the version byte and attempts to find a matching NetworkParameters. If you aren't sure
+     * which network the address is intended for (eg, it was provided by a user), you can use this to decide if it is
+     * compatible with the current wallet.
+     *
+     * @return a NetworkParameters of the address
+     * @throws AddressFormatException if the string wasn't of a known version
+     */
+    public static NetworkParameters getParametersFromAddress(String address) throws AddressFormatException {
+        try {
+            return SlpAddressFactory.create().getFromFormattedAddress(null, address).getParameters();
+        } catch (WrongNetworkException e) {
+            throw new RuntimeException(e);  // Cannot happen.
+        }
+    }
+
+    /**
      * Returns true if this address is a Pay-To-Script-Hash (P2SH) address.
      * See also https://github.com/bitcoin/bips/blob/master/bip-0013.mediawiki: Address Format for pay-to-script-hash
      */
@@ -128,19 +129,18 @@ public class SlpAddress extends Address {
         return super.clone();
     }
 
-    /**
-     * Given an address, examines the version byte and attempts to find a matching NetworkParameters. If you aren't sure
-     * which network the address is intended for (eg, it was provided by a user), you can use this to decide if it is
-     * compatible with the current wallet.
-     *
-     * @return a NetworkParameters of the address
-     * @throws AddressFormatException if the string wasn't of a known version
-     */
-    public static NetworkParameters getParametersFromAddress(String address) throws AddressFormatException {
-        try {
-            return SlpAddressFactory.create().getFromFormattedAddress(null, address).getParameters();
-        } catch (WrongNetworkException e) {
-            throw new RuntimeException(e);  // Cannot happen.
+    public enum CashAddressType {
+        PubKey(0),
+        Script(1);
+
+        private int value;
+
+        CashAddressType(int value) {
+            this.value = value;
+        }
+
+        public byte getValue() {
+            return (byte) value;
         }
     }
 }

@@ -58,6 +58,43 @@ public class Address extends VersionedChecksummedBytes {
     }
 
     /**
+     * Construct an address from parameters and the hash160 form. Example:<p>
+     *
+     * <pre>new Address(MainNetParams.get(), Hex.decode("4a22c3c4cbb31e4d03b15550636762bda0baf85a"));</pre>
+     */
+    public Address(NetworkParameters params, byte[] hash160) {
+        super(params.getAddressHeader(), hash160);
+        checkArgument(hash160.length == 20, "Addresses are 160-bit hashes, so you must provide 20 bytes");
+        this.params = params;
+    }
+
+    /**
+     * @deprecated Use {@link #fromBase58(NetworkParameters, String)}
+     */
+    @Deprecated
+    public Address(@Nullable NetworkParameters params, String address) throws AddressFormatException {
+        super(address);
+        if (params != null) {
+            if (!isAcceptableVersion(params, version)) {
+                throw new WrongNetworkException(version, params.getAcceptableAddressCodes());
+            }
+            this.params = params;
+        } else {
+            NetworkParameters paramsFound = null;
+            for (NetworkParameters p : Networks.get()) {
+                if (isAcceptableVersion(p, version)) {
+                    paramsFound = p;
+                    break;
+                }
+            }
+            if (paramsFound == null)
+                throw new AddressFormatException("No network found for " + address);
+
+            this.params = paramsFound;
+        }
+    }
+
+    /**
      * Returns an Address that represents the given P2SH script hash.
      */
     public static Address fromP2PKHHash(NetworkParameters params, byte[] hash160) {
@@ -164,40 +201,31 @@ public class Address extends VersionedChecksummedBytes {
     }
 
     /**
-     * Construct an address from parameters and the hash160 form. Example:<p>
+     * Given an address, examines the version byte and attempts to find a matching NetworkParameters. If you aren't sure
+     * which network the address is intended for (eg, it was provided by a user), you can use this to decide if it is
+     * compatible with the current wallet.
      *
-     * <pre>new Address(MainNetParams.get(), Hex.decode("4a22c3c4cbb31e4d03b15550636762bda0baf85a"));</pre>
+     * @return a NetworkParameters of the address
+     * @throws AddressFormatException if the string wasn't of a known version
      */
-    public Address(NetworkParameters params, byte[] hash160) {
-        super(params.getAddressHeader(), hash160);
-        checkArgument(hash160.length == 20, "Addresses are 160-bit hashes, so you must provide 20 bytes");
-        this.params = params;
+    public static NetworkParameters getParametersFromAddress(String address) throws AddressFormatException {
+        try {
+            return Address.fromBase58(null, address).getParameters();
+        } catch (WrongNetworkException e) {
+            throw new RuntimeException(e);  // Cannot happen.
+        }
     }
 
     /**
-     * @deprecated Use {@link #fromBase58(NetworkParameters, String)}
+     * Check if a given address version is valid given the NetworkParameters.
      */
-    @Deprecated
-    public Address(@Nullable NetworkParameters params, String address) throws AddressFormatException {
-        super(address);
-        if (params != null) {
-            if (!isAcceptableVersion(params, version)) {
-                throw new WrongNetworkException(version, params.getAcceptableAddressCodes());
+    public static boolean isAcceptableVersion(NetworkParameters params, int version) {
+        for (int v : params.getAcceptableAddressCodes()) {
+            if (version == v) {
+                return true;
             }
-            this.params = params;
-        } else {
-            NetworkParameters paramsFound = null;
-            for (NetworkParameters p : Networks.get()) {
-                if (isAcceptableVersion(p, version)) {
-                    paramsFound = p;
-                    break;
-                }
-            }
-            if (paramsFound == null)
-                throw new AddressFormatException("No network found for " + address);
-
-            this.params = paramsFound;
         }
+        return false;
     }
 
     /**
@@ -242,34 +270,6 @@ public class Address extends VersionedChecksummedBytes {
      */
     public NetworkParameters getParameters() {
         return params;
-    }
-
-    /**
-     * Given an address, examines the version byte and attempts to find a matching NetworkParameters. If you aren't sure
-     * which network the address is intended for (eg, it was provided by a user), you can use this to decide if it is
-     * compatible with the current wallet.
-     *
-     * @return a NetworkParameters of the address
-     * @throws AddressFormatException if the string wasn't of a known version
-     */
-    public static NetworkParameters getParametersFromAddress(String address) throws AddressFormatException {
-        try {
-            return Address.fromBase58(null, address).getParameters();
-        } catch (WrongNetworkException e) {
-            throw new RuntimeException(e);  // Cannot happen.
-        }
-    }
-
-    /**
-     * Check if a given address version is valid given the NetworkParameters.
-     */
-    public static boolean isAcceptableVersion(NetworkParameters params, int version) {
-        for (int v : params.getAcceptableAddressCodes()) {
-            if (version == v) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**

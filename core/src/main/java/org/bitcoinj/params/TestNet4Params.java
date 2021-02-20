@@ -34,6 +34,9 @@ public class TestNet4Params extends AbstractBitcoinNetParams {
     public static final int TESTNET_MAJORITY_WINDOW = 100;
     public static final int TESTNET_MAJORITY_REJECT_BLOCK_OUTDATED = 75;
     public static final int TESTNET_MAJORITY_ENFORCE_BLOCK_UPGRADE = 51;
+    // February 16th 2012
+    private static final Date testnetDiffDate = new Date(1329264000000L);
+    private static TestNet4Params instance;
 
     public TestNet4Params() {
         super();
@@ -91,8 +94,6 @@ public class TestNet4Params extends AbstractBitcoinNetParams {
 
     }
 
-    private static TestNet4Params instance;
-
     public static synchronized TestNet4Params get() {
         if (instance == null) {
             instance = new TestNet4Params();
@@ -100,15 +101,12 @@ public class TestNet4Params extends AbstractBitcoinNetParams {
         return instance;
     }
 
+    public static boolean isValidTestnetDateBlock(Block block) {
+        return block.getTime().after(testnetDiffDate);
+    }
+
     @Override
     public String getPaymentProtocolId() {
         return PAYMENT_PROTOCOL_ID_TESTNET4;
-    }
-
-    // February 16th 2012
-    private static final Date testnetDiffDate = new Date(1329264000000L);
-
-    public static boolean isValidTestnetDateBlock(Block block) {
-        return block.getTime().after(testnetDiffDate);
     }
 }

@@ -59,62 +59,6 @@ import static org.bitcoinj.core.Coin.SMALLEST_UNIT_EXPONENT;
 public final class BtcAutoFormat extends BtcFormat {
 
     /**
-     * Enum for specifying the style of currency indicators that are used
-     * when formatting, either codes or symbols.
-     */
-    public enum Style {
-
-        /* Notes:
-         * 1) The odd-looking character in the replacements below, named "currency sign," is used in
-         *    the patterns recognized by Java's number formatter.  A single occurrence of this
-         *    character specifies a currency symbol, while two adjacent occurrences indicate an
-         *    international currency code.
-         * 2) The positive and negative patterns each have three parts: prefix, number, suffix.
-         *    The number characters are limited to digits, zero, decimal-separator, group-separator, and
-         *    scientific-notation specifier: [#0.,E]
-         *    All number characters besides 'E' must be single-quoted in order to appear as
-         *    literals in either the prefix or suffix.
-         * These patterns are explained in the documentation for java.text.DecimalFormat.
-         */
-
-        /**
-         * Constant for the formatting style that uses a currency code, e.g., "BTC".
-         */
-        CODE {
-            @Override
-            void apply(DecimalFormat decimalFormat) {
-                /* To switch to using codes from symbols, we replace each single occurrence of the
-                 * currency-sign character with two such characters in a row.
-                 * We also insert a space character between every occurrence of this character and
-                 * an adjacent numerical digit or negative sign (that is, between the currency-sign
-                 * and the signed-number). */
-                decimalFormat.applyPattern(
-                        negify(decimalFormat.toPattern()).replaceAll("¤", "¤¤").
-                                replaceAll("([#0.,E-])¤¤", "$1 ¤¤").
-                                replaceAll("¤¤([0#.,E-])", "¤¤ $1")
-                );
-            }
-        },
-
-        /**
-         * Constant for the formatting style that uses a currency symbol, e.g., "฿".
-         */
-        SYMBOL {
-            @Override
-            void apply(DecimalFormat decimalFormat) {
-                /* To make certain we are using symbols rather than codes, we replace
-                 * each double occurrence of the currency sign character with a single. */
-                decimalFormat.applyPattern(negify(decimalFormat.toPattern()).replaceAll("¤¤", "¤"));
-            }
-        };
-
-        /**
-         * Effect a style corresponding to an enum value on the given number formatter object.
-         */
-        abstract void apply(DecimalFormat decimalFormat);
-    }
-
-    /**
      * Constructor
      */
     protected BtcAutoFormat(Locale locale, Style style, int fractionPlaces) {
@@ -219,6 +163,62 @@ public final class BtcAutoFormat extends BtcFormat {
     @Override
     public String toString() {
         return "Auto-format " + pattern();
+    }
+
+    /**
+     * Enum for specifying the style of currency indicators that are used
+     * when formatting, either codes or symbols.
+     */
+    public enum Style {
+
+        /* Notes:
+         * 1) The odd-looking character in the replacements below, named "currency sign," is used in
+         *    the patterns recognized by Java's number formatter.  A single occurrence of this
+         *    character specifies a currency symbol, while two adjacent occurrences indicate an
+         *    international currency code.
+         * 2) The positive and negative patterns each have three parts: prefix, number, suffix.
+         *    The number characters are limited to digits, zero, decimal-separator, group-separator, and
+         *    scientific-notation specifier: [#0.,E]
+         *    All number characters besides 'E' must be single-quoted in order to appear as
+         *    literals in either the prefix or suffix.
+         * These patterns are explained in the documentation for java.text.DecimalFormat.
+         */
+
+        /**
+         * Constant for the formatting style that uses a currency code, e.g., "BTC".
+         */
+        CODE {
+            @Override
+            void apply(DecimalFormat decimalFormat) {
+                /* To switch to using codes from symbols, we replace each single occurrence of the
+                 * currency-sign character with two such characters in a row.
+                 * We also insert a space character between every occurrence of this character and
+                 * an adjacent numerical digit or negative sign (that is, between the currency-sign
+                 * and the signed-number). */
+                decimalFormat.applyPattern(
+                        negify(decimalFormat.toPattern()).replaceAll("¤", "¤¤").
+                                replaceAll("([#0.,E-])¤¤", "$1 ¤¤").
+                                replaceAll("¤¤([0#.,E-])", "¤¤ $1")
+                );
+            }
+        },
+
+        /**
+         * Constant for the formatting style that uses a currency symbol, e.g., "฿".
+         */
+        SYMBOL {
+            @Override
+            void apply(DecimalFormat decimalFormat) {
+                /* To make certain we are using symbols rather than codes, we replace
+                 * each double occurrence of the currency sign character with a single. */
+                decimalFormat.applyPattern(negify(decimalFormat.toPattern()).replaceAll("¤¤", "¤"));
+            }
+        };
+
+        /**
+         * Effect a style corresponding to an enum value on the given number formatter object.
+         */
+        abstract void apply(DecimalFormat decimalFormat);
     }
 
 }

@@ -32,10 +32,10 @@ import java.security.KeyStoreException;
  * Windows, etc.
  */
 public interface TrustStoreLoader {
-    KeyStore getKeyStore() throws FileNotFoundException, KeyStoreException;
-
     String DEFAULT_KEYSTORE_TYPE = KeyStore.getDefaultType();
     String DEFAULT_KEYSTORE_PASSWORD = "changeit";
+
+    KeyStore getKeyStore() throws FileNotFoundException, KeyStoreException;
 
     class DefaultTrustStoreLoader implements TrustStoreLoader {
         @Override

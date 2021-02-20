@@ -49,12 +49,6 @@ public class FilterMerger {
         this.vBloomFilterFPRate = bloomFilterFPRate;
     }
 
-    public static class Result {
-        public BloomFilter filter;
-        public long earliestKeyTimeSecs;
-        public boolean changed;
-    }
-
     public Result calculate(ImmutableList<PeerFilterProvider> providers) {
         LinkedList<PeerFilterProvider> begunProviders = new LinkedList<>();
         try {
@@ -102,15 +96,21 @@ public class FilterMerger {
         }
     }
 
-    public void setBloomFilterFPRate(double bloomFilterFPRate) {
-        this.vBloomFilterFPRate = bloomFilterFPRate;
-    }
-
     public double getBloomFilterFPRate() {
         return vBloomFilterFPRate;
     }
 
+    public void setBloomFilterFPRate(double bloomFilterFPRate) {
+        this.vBloomFilterFPRate = bloomFilterFPRate;
+    }
+
     public BloomFilter getLastFilter() {
         return lastFilter;
+    }
+
+    public static class Result {
+        public BloomFilter filter;
+        public long earliestKeyTimeSecs;
+        public boolean changed;
     }
 }

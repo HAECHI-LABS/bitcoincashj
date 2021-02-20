@@ -61,6 +61,68 @@ public class BIP47PaymentCode {
         this.strPaymentCode = this.makeV1();
     }
 
+    public static byte[] getMask(byte[] sPoint, byte[] oPoint) {
+        Mac sha512_HMAC = null;
+        byte[] mac_data = null;
+
+        try {
+            sha512_HMAC = Mac.getInstance("HmacSHA512");
+            SecretKeySpec secretkey = new SecretKeySpec(oPoint, "HmacSHA512");
+            sha512_HMAC.init(secretkey);
+            mac_data = sha512_HMAC.doFinal(sPoint);
+        } catch (InvalidKeyException var5) {
+        } catch (NoSuchAlgorithmException var6) {
+        }
+
+        return mac_data;
+    }
+
+    public static byte[] blind(byte[] payload, byte[] mask) throws AddressFormatException {
+        byte[] ret = new byte[80];
+        byte[] pubkey = new byte[32];
+        byte[] chain = new byte[32];
+        byte[] buf0 = new byte[32];
+        byte[] buf1 = new byte[32];
+        System.arraycopy(payload, 0, ret, 0, 80);
+        System.arraycopy(payload, 3, pubkey, 0, 32);
+        System.arraycopy(payload, 35, chain, 0, 32);
+        System.arraycopy(mask, 0, buf0, 0, 32);
+        System.arraycopy(mask, 32, buf1, 0, 32);
+        System.arraycopy(xor(pubkey, buf0), 0, ret, 3, 32);
+        System.arraycopy(xor(chain, buf1), 0, ret, 35, 32);
+        return ret;
+    }
+
+    private static byte[] xor(byte[] a, byte[] b) {
+        if (a.length != b.length) {
+            return null;
+        } else {
+            byte[] ret = new byte[a.length];
+
+            for (int i = 0; i < a.length; ++i) {
+                ret[i] = (byte) (b[i] ^ a[i]);
+            }
+
+            return ret;
+        }
+    }
+
+    public static DeterministicKey createMasterPubKeyFromPaymentCode(String payment_code_str) throws AddressFormatException {
+        byte[] paymentCodeBytes = Base58.decodeChecked(payment_code_str);
+        ByteBuffer bb = ByteBuffer.wrap(paymentCodeBytes);
+        if (bb.get() != 71) {
+            throw new AddressFormatException("invalid payment code version");
+        } else {
+            byte[] chain = new byte[32];
+            byte[] pub = new byte[33];
+            bb.get();
+            bb.get();
+            bb.get(pub);
+            bb.get(chain);
+            return HDKeyDerivation.createMasterPubKeyFromBytes(pub, chain);
+        }
+    }
+
     public byte[] getPayload() throws AddressFormatException {
         byte[] pcBytes = Base58.decodeChecked(this.strPaymentCode);
         byte[] payload = new byte[80];
@@ -93,38 +155,6 @@ public class BIP47PaymentCode {
 
     public String toString() {
         return this.strPaymentCode;
-    }
-
-    public static byte[] getMask(byte[] sPoint, byte[] oPoint) {
-        Mac sha512_HMAC = null;
-        byte[] mac_data = null;
-
-        try {
-            sha512_HMAC = Mac.getInstance("HmacSHA512");
-            SecretKeySpec secretkey = new SecretKeySpec(oPoint, "HmacSHA512");
-            sha512_HMAC.init(secretkey);
-            mac_data = sha512_HMAC.doFinal(sPoint);
-        } catch (InvalidKeyException var5) {
-        } catch (NoSuchAlgorithmException var6) {
-        }
-
-        return mac_data;
-    }
-
-    public static byte[] blind(byte[] payload, byte[] mask) throws AddressFormatException {
-        byte[] ret = new byte[80];
-        byte[] pubkey = new byte[32];
-        byte[] chain = new byte[32];
-        byte[] buf0 = new byte[32];
-        byte[] buf1 = new byte[32];
-        System.arraycopy(payload, 0, ret, 0, 80);
-        System.arraycopy(payload, 3, pubkey, 0, 32);
-        System.arraycopy(payload, 35, chain, 0, 32);
-        System.arraycopy(mask, 0, buf0, 0, 32);
-        System.arraycopy(mask, 32, buf1, 0, 32);
-        System.arraycopy(xor(pubkey, buf0), 0, ret, 3, 32);
-        System.arraycopy(xor(chain, buf1), 0, ret, 35, 32);
-        return ret;
     }
 
     private Pair<byte[], byte[]> parse() throws AddressFormatException {
@@ -182,20 +212,6 @@ public class BIP47PaymentCode {
         return HDKeyDerivation.createMasterPubKeyFromBytes(pub, chain);
     }
 
-    private static byte[] xor(byte[] a, byte[] b) {
-        if (a.length != b.length) {
-            return null;
-        } else {
-            byte[] ret = new byte[a.length];
-
-            for (int i = 0; i < a.length; ++i) {
-                ret[i] = (byte) (b[i] ^ a[i]);
-            }
-
-            return ret;
-        }
-    }
-
     public boolean isValid() {
         try {
             byte[] afe = Base58.decodeChecked(this.strPaymentCode);
@@ -217,22 +233,6 @@ public class BIP47PaymentCode {
             return false;
         } catch (AddressFormatException var8) {
             return false;
-        }
-    }
-
-    public static DeterministicKey createMasterPubKeyFromPaymentCode(String payment_code_str) throws AddressFormatException {
-        byte[] paymentCodeBytes = Base58.decodeChecked(payment_code_str);
-        ByteBuffer bb = ByteBuffer.wrap(paymentCodeBytes);
-        if (bb.get() != 71) {
-            throw new AddressFormatException("invalid payment code version");
-        } else {
-            byte[] chain = new byte[32];
-            byte[] pub = new byte[33];
-            bb.get();
-            bb.get();
-            bb.get(pub);
-            bb.get(chain);
-            return HDKeyDerivation.createMasterPubKeyFromBytes(pub, chain);
         }
     }
 

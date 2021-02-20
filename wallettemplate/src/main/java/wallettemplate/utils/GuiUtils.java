@@ -37,6 +37,9 @@ import static com.google.common.base.Preconditions.checkState;
 import static wallettemplate.utils.WTUtils.unchecked;
 
 public class GuiUtils {
+    public static final int UI_ANIMATION_TIME_MSEC = 600;
+    public static final Duration UI_ANIMATION_TIME = Duration.millis(UI_ANIMATION_TIME_MSEC);
+
     public static void runAlert(BiConsumer<Stage, AlertWindowController> setup) {
         try {
             // JavaFX2 doesn't actually have a standard alert template. Instead the Scene Builder app will create FXML
@@ -84,9 +87,6 @@ public class GuiUtils {
         else
             Platform.runLater(r);
     }
-
-    public static final int UI_ANIMATION_TIME_MSEC = 600;
-    public static final Duration UI_ANIMATION_TIME = Duration.millis(UI_ANIMATION_TIME_MSEC);
 
     public static Animation fadeIn(Node ui) {
         return fadeIn(ui, 0);

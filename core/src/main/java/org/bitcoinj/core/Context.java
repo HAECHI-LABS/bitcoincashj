@@ -43,16 +43,16 @@ import static com.google.common.base.Preconditions.checkNotNull;
  * in the case where multiple instances of the library are in use simultaneously.</p>
  */
 public class Context {
-    private static final Logger log = LoggerFactory.getLogger(Context.class);
-
     public static final int DEFAULT_EVENT_HORIZON = 100;
-
+    private static final Logger log = LoggerFactory.getLogger(Context.class);
+    private static final ThreadLocal<Context> slot = new ThreadLocal<>();
+    private static volatile Context lastConstructed;
+    private static boolean isStrictMode;
     final private TxConfidenceTable confidenceTable;
     final private NetworkParameters params;
     final private int eventHorizon;
     final private boolean ensureMinRequiredFee;
     final private Coin feePerKb;
-
     /**
      * Creates a new context object. For now, this will be done for you by the framework. Eventually you will be
      * expected to do this yourself in the same manner as fetching a NetworkParameters object (at the start of your app).
@@ -62,7 +62,6 @@ public class Context {
     public Context(NetworkParameters params) {
         this(params, DEFAULT_EVENT_HORIZON, Transaction.DEFAULT_TX_FEE, true);
     }
-
     /**
      * Creates a new custom context object. This is mainly meant for unit tests for now.
      *
@@ -81,10 +80,6 @@ public class Context {
         lastConstructed = this;
         slot.set(this);
     }
-
-    private static volatile Context lastConstructed;
-    private static boolean isStrictMode;
-    private static final ThreadLocal<Context> slot = new ThreadLocal<>();
 
     /**
      * Returns the current context that is associated with the <b>calling thread</b>. BitcoinJ is an API that has thread

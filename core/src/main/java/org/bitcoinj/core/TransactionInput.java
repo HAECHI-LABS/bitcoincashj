@@ -248,13 +248,6 @@ public class TransactionInput extends ChildMessage {
     }
 
     /**
-     * Clear input scripts, e.g. in preparation for signing.
-     */
-    public void clearScriptBytes() {
-        setScriptBytes(TransactionInput.EMPTY_ARRAY);
-    }
-
-    /**
      * @param scriptBytes the scriptBytes to set
      */
     void setScriptBytes(byte[] scriptBytes) {
@@ -265,6 +258,13 @@ public class TransactionInput extends ChildMessage {
         // 40 = previous_outpoint (36) + sequence (4)
         int newLength = 40 + (scriptBytes == null ? 1 : VarInt.sizeOf(scriptBytes.length) + scriptBytes.length);
         adjustLength(newLength - oldLength);
+    }
+
+    /**
+     * Clear input scripts, e.g. in preparation for signing.
+     */
+    public void clearScriptBytes() {
+        setScriptBytes(TransactionInput.EMPTY_ARRAY);
     }
 
     /**
@@ -282,14 +282,6 @@ public class TransactionInput extends ChildMessage {
         return value;
     }
 
-    public enum ConnectionResult {
-        NO_SUCH_TX,
-        ALREADY_SPENT,
-        SUCCESS
-    }
-
-    // TODO: Clean all this up once TransactionOutPoint disappears.
-
     /**
      * Locates the referenced output from the given pool of transactions.
      *
@@ -302,6 +294,8 @@ public class TransactionInput extends ChildMessage {
             return null;
         return tx.getOutputs().get((int) outpoint.getIndex());
     }
+
+    // TODO: Clean all this up once TransactionOutPoint disappears.
 
     @Nullable
     public TransactionOutput findConnectedOutput(Wallet wallet) {
@@ -322,12 +316,6 @@ public class TransactionInput extends ChildMessage {
     @Nullable
     public RedeemData getConnectedRedeemData(KeyBag keyBag) throws ScriptException {
         return getOutpoint().getConnectedRedeemData(keyBag);
-    }
-
-
-    public enum ConnectMode {
-        DISCONNECT_ON_CONFLICT,
-        ABORT_ON_CONFLICT
     }
 
     /**
@@ -560,5 +548,16 @@ public class TransactionInput extends ChildMessage {
         } catch (ScriptException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public enum ConnectionResult {
+        NO_SUCH_TX,
+        ALREADY_SPENT,
+        SUCCESS
+    }
+
+    public enum ConnectMode {
+        DISCONNECT_ON_CONFLICT,
+        ABORT_ON_CONFLICT
     }
 }

@@ -208,8 +208,8 @@ public class MultisigAppKit extends WalletKitCore {
         Transaction spendTx = wallet().createSendDontSign(address, amount, true);
         spendTx.getInputs().sort(new Comparator<TransactionInput>() {
             public int compare(TransactionInput o1, TransactionInput o2) {
-                int o1Index = (int)o1.getOutpoint().getIndex();
-                int o2Index = (int)o2.getOutpoint().getIndex();
+                int o1Index = (int) o1.getOutpoint().getIndex();
+                int o2Index = (int) o2.getOutpoint().getIndex();
                 return o1Index - o2Index;
             }
         });
@@ -232,16 +232,16 @@ public class MultisigAppKit extends WalletKitCore {
         req.signInputs = false;
         req.shuffleOutputs = false;
         req.allowUnconfirmed();
-        for(TransactionInput input : currentRawTx.getInputs()) {
+        for (TransactionInput input : currentRawTx.getInputs()) {
             TransactionOutput utxo = input.findConnectedOutput(wallet());
             req.tx.addInput(utxo);
         }
 
-        for(TransactionOutput output : currentRawTx.getOutputs()) {
+        for (TransactionOutput output : currentRawTx.getOutputs()) {
             req.tx.addOutput(output);
         }
 
-        for(int x = 0; x < req.tx.getInputs().size(); x++) {
+        for (int x = 0; x < req.tx.getInputs().size(); x++) {
             Script scriptSigToInsert = currentRawTx.getInput(x).getScriptSig();
             req.tx.getInput(x).setScriptSig(scriptSigToInsert);
         }
@@ -250,8 +250,9 @@ public class MultisigAppKit extends WalletKitCore {
     }
 
     /**
-    Signs multisig inputs, and returns whether or not more signatures are needed.
-     @return returns whether more signatures are needed. true = more sigs needed, false = tx is complete for broadcasting
+     * Signs multisig inputs, and returns whether or not more signatures are needed.
+     *
+     * @return returns whether more signatures are needed. true = more sigs needed, false = tx is complete for broadcasting
      */
     public boolean signMultisigInputs(Transaction tx) {
         return signMultisigInputs(tx, Transaction.SigHash.ALL, false, true);
@@ -259,9 +260,9 @@ public class MultisigAppKit extends WalletKitCore {
 
     public boolean signMultisigInputs(Transaction tx, Transaction.SigHash sigHashMode, boolean anyoneCanPay, boolean useForkId) {
         boolean needsMoreSigs = false;
-        for(TransactionInput input : tx.getInputs()) {
+        for (TransactionInput input : tx.getInputs()) {
             RedeemData bitcoinRedeemData = input.getConnectedRedeemData(wallet());
-            if(bitcoinRedeemData != null) {
+            if (bitcoinRedeemData != null) {
                 TransactionOutput utxo = input.getConnectedOutput();
                 Script script = utxo.getScriptPubKey();
                 byte[] redeemScriptProgram = bitcoinRedeemData.redeemScript.getProgram();
@@ -274,7 +275,7 @@ public class MultisigAppKit extends WalletKitCore {
                         useForkId
                 );
                 Script inputScript = input.getScriptSig();
-                if(usingSchnorr()) {
+                if (usingSchnorr()) {
                     SchnorrSignature schnorrSignature = tx.calculateSchnorrSignature(
                             input.getIndex(),
                             bitcoinRedeemData.getFullKey(),

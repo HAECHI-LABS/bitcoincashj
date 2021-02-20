@@ -54,6 +54,10 @@ public class ChildNumber implements Comparable<ChildNumber> {
         this.i = i;
     }
 
+    private static boolean hasHardenedBit(int a) {
+        return (a & HARDENED_BIT) != 0;
+    }
+
     /**
      * Returns the uint32 encoded form of the path element, including the most significant bit.
      */
@@ -70,10 +74,6 @@ public class ChildNumber implements Comparable<ChildNumber> {
 
     public boolean isHardened() {
         return hasHardenedBit(i);
-    }
-
-    private static boolean hasHardenedBit(int a) {
-        return (a & HARDENED_BIT) != 0;
     }
 
     /**

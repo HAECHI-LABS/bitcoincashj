@@ -87,9 +87,8 @@ class StoredTransactionOutPoint {
 class TransactionalHashMap<KeyType, ValueType> {
     ThreadLocal<HashMap<KeyType, ValueType>> tempMap;
     ThreadLocal<HashSet<KeyType>> tempSetRemoved;
-    private ThreadLocal<Boolean> inTransaction;
-
     HashMap<KeyType, ValueType> map;
+    private ThreadLocal<Boolean> inTransaction;
 
     public TransactionalHashMap() {
         tempMap = new ThreadLocal<>();
@@ -236,16 +235,6 @@ class TransactionalMultiKeyHashMap<UniqueKeyType, MultiKeyType, ValueType> {
  * Used primarily for unit testing.
  */
 public class MemoryFullPrunedBlockStore implements FullPrunedBlockStore {
-    protected static class StoredBlockAndWasUndoableFlag {
-        public StoredBlock block;
-        public boolean wasUndoable;
-
-        public StoredBlockAndWasUndoableFlag(StoredBlock block, boolean wasUndoable) {
-            this.block = block;
-            this.wasUndoable = wasUndoable;
-        }
-    }
-
     private TransactionalHashMap<Sha256Hash, StoredBlockAndWasUndoableFlag> blockMap;
     private TransactionalMultiKeyHashMap<Sha256Hash, Integer, StoredUndoableBlock> fullBlockMap;
     //TODO: Use something more suited to remove-heavy use?
@@ -254,7 +243,6 @@ public class MemoryFullPrunedBlockStore implements FullPrunedBlockStore {
     private StoredBlock verifiedChainHead;
     private int fullStoreDepth;
     private NetworkParameters params;
-
     /**
      * Set up the MemoryFullPrunedBlockStore
      *
@@ -433,5 +421,15 @@ public class MemoryFullPrunedBlockStore implements FullPrunedBlockStore {
             }
         }
         return foundOutputs;
+    }
+
+    protected static class StoredBlockAndWasUndoableFlag {
+        public StoredBlock block;
+        public boolean wasUndoable;
+
+        public StoredBlockAndWasUndoableFlag(StoredBlock block, boolean wasUndoable) {
+            this.block = block;
+            this.wasUndoable = wasUndoable;
+        }
     }
 }

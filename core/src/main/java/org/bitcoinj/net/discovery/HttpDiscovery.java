@@ -48,22 +48,9 @@ import static com.google.common.base.Preconditions.checkArgument;
  */
 public class HttpDiscovery implements PeerDiscovery {
     private static final Logger log = LoggerFactory.getLogger(HttpDiscovery.class);
-
-    public static class Details {
-        @Nullable
-        public final ECKey pubkey;
-        public final URI uri;
-
-        public Details(@Nullable ECKey pubkey, URI uri) {
-            this.pubkey = pubkey;
-            this.uri = uri;
-        }
-    }
-
     private final Details details;
     private final NetworkParameters params;
     private final OkHttpClient client;
-
     /**
      * Constructs a discovery object that will read data from the given HTTP[S] URI and, if a public key is provided,
      * will check the signature using that key.
@@ -142,5 +129,16 @@ public class HttpDiscovery implements PeerDiscovery {
 
     @Override
     public void shutdown() {
+    }
+
+    public static class Details {
+        @Nullable
+        public final ECKey pubkey;
+        public final URI uri;
+
+        public Details(@Nullable ECKey pubkey, URI uri) {
+            this.pubkey = pubkey;
+            this.uri = uri;
+        }
     }
 }

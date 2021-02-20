@@ -56,23 +56,21 @@ import static com.google.common.base.Preconditions.checkNotNull;
  */
 public class KeyCrypterScrypt implements KeyCrypter {
 
-    private static final Logger log = LoggerFactory.getLogger(KeyCrypterScrypt.class);
-
     /**
      * Key length in bytes.
      */
     public static final int KEY_LENGTH = 32; // = 256 bits.
-
     /**
      * The size of an AES block in bytes.
      * This is also the length of the initialisation vector.
      */
     public static final int BLOCK_LENGTH = 16;  // = 128 bits.
-
     /**
      * The length of the salt used.
      */
     public static final int SALT_LENGTH = 8;
+    private static final Logger log = LoggerFactory.getLogger(KeyCrypterScrypt.class);
+    private static final SecureRandom secureRandom;
 
     static {
         // Init proper random number generator, as some old Android installations have bugs that make it unsecure.
@@ -80,17 +78,6 @@ public class KeyCrypterScrypt implements KeyCrypter {
             new LinuxSecureRandom();
 
         secureRandom = new SecureRandom();
-    }
-
-    private static final SecureRandom secureRandom;
-
-    /**
-     * Returns SALT_LENGTH (8) bytes of random data
-     */
-    public static byte[] randomSalt() {
-        byte[] salt = new byte[SALT_LENGTH];
-        secureRandom.nextBytes(salt);
-        return salt;
     }
 
     // Scrypt parameters.
@@ -132,6 +119,32 @@ public class KeyCrypterScrypt implements KeyCrypter {
                 || scryptParameters.getSalt().toByteArray().length == 0) {
             log.warn("You are using a ScryptParameters with no salt. Your encryption may be vulnerable to a dictionary attack.");
         }
+    }
+
+    /**
+     * Returns SALT_LENGTH (8) bytes of random data
+     */
+    public static byte[] randomSalt() {
+        byte[] salt = new byte[SALT_LENGTH];
+        secureRandom.nextBytes(salt);
+        return salt;
+    }
+
+    /**
+     * Convert a CharSequence (which are UTF16) into a byte array.
+     * <p>
+     * Note: a String.getBytes() is not used to avoid creating a String of the password in the JVM.
+     */
+    private static byte[] convertToByteArray(CharSequence charSequence) {
+        checkNotNull(charSequence);
+
+        byte[] byteArray = new byte[charSequence.length() << 1];
+        for (int i = 0; i < charSequence.length(); i++) {
+            int bytePosition = i << 1;
+            byteArray[bytePosition] = (byte) ((charSequence.charAt(i) & 0xFF00) >> 8);
+            byteArray[bytePosition + 1] = (byte) (charSequence.charAt(i) & 0x00FF);
+        }
+        return byteArray;
     }
 
     /**
@@ -231,23 +244,6 @@ public class KeyCrypterScrypt implements KeyCrypter {
         } catch (RuntimeException e) {
             throw new KeyCrypterException("Could not decrypt bytes", e);
         }
-    }
-
-    /**
-     * Convert a CharSequence (which are UTF16) into a byte array.
-     * <p>
-     * Note: a String.getBytes() is not used to avoid creating a String of the password in the JVM.
-     */
-    private static byte[] convertToByteArray(CharSequence charSequence) {
-        checkNotNull(charSequence);
-
-        byte[] byteArray = new byte[charSequence.length() << 1];
-        for (int i = 0; i < charSequence.length(); i++) {
-            int bytePosition = i << 1;
-            byteArray[bytePosition] = (byte) ((charSequence.charAt(i) & 0xFF00) >> 8);
-            byteArray[bytePosition + 1] = (byte) (charSequence.charAt(i) & 0x00FF);
-        }
-        return byteArray;
     }
 
     public ScryptParameters getScryptParameters() {

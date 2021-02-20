@@ -27,13 +27,10 @@ import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 import org.bitcoinj.core.NetworkParameters;
-import org.bitcoinj.core.PeerAddress;
 import org.bitcoinj.core.Utils;
 import org.bitcoinj.kits.WalletAppKit;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.params.RegTestParams;
-import org.bitcoinj.params.ScaleNetParams;
-import org.bitcoinj.params.TestNet4Params;
 import org.bitcoinj.script.Script;
 import org.bitcoinj.utils.AppDataDirectory;
 import org.bitcoinj.utils.BriefLogFormatter;
@@ -46,27 +43,31 @@ import wallettemplate.utils.TextFieldValidator;
 import javax.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.URL;
-import java.net.UnknownHostException;
 
 import static wallettemplate.utils.GuiUtils.*;
 
 public class Main extends Application {
-    public static NetworkParameters params = MainNetParams.get();
     public static final Script.ScriptType PREFERRED_OUTPUT_SCRIPT_TYPE = Script.ScriptType.P2PKH;
     public static final String APP_NAME = "WalletTemplate";
+    public static NetworkParameters params = MainNetParams.get();
     private static final String WALLET_FILE_NAME = APP_NAME.replaceAll("[^a-zA-Z0-9.-]", "_") + "-"
             + params.getPaymentProtocolId();
 
     public static WalletAppKit bitcoin;
     public static Main instance;
-
-    private StackPane uiStack;
-    private Pane mainUI;
     public MainController controller;
     public NotificationBarPane notificationBar;
     public Stage mainWindow;
+    private StackPane uiStack;
+    private Pane mainUI;
+    private Node stopClickPane = new Pane();
+    @Nullable
+    private OverlayUI currentOverlay;
+
+    public static void main(String[] args) {
+        launch(args);
+    }
 
     @Override
     public void start(Stage mainWindow) throws Exception {
@@ -161,7 +162,51 @@ public class Main extends Application {
             bitcoin.restoreWalletFromSeed(seed);
     }
 
-    private Node stopClickPane = new Pane();
+    public <T> OverlayUI<T> overlayUI(Node node, T controller) {
+        checkGuiThread();
+        OverlayUI<T> pair = new OverlayUI<>(node, controller);
+        // Auto-magically set the overlayUI member, if it's there.
+        try {
+            controller.getClass().getField("overlayUI").set(controller, pair);
+        } catch (IllegalAccessException | NoSuchFieldException ignored) {
+        }
+        pair.show();
+        return pair;
+    }
+
+    /**
+     * Loads the FXML file with the given name, blurs out the main UI and puts this one on top.
+     */
+    public <T> OverlayUI<T> overlayUI(String name) {
+        try {
+            checkGuiThread();
+            // Load the UI from disk.
+            URL location = GuiUtils.getResource(name);
+            FXMLLoader loader = new FXMLLoader(location);
+            Pane ui = loader.load();
+            T controller = loader.getController();
+            OverlayUI<T> pair = new OverlayUI<>(ui, controller);
+            // Auto-magically set the overlayUI member, if it's there.
+            try {
+                if (controller != null)
+                    controller.getClass().getField("overlayUI").set(controller, pair);
+            } catch (IllegalAccessException | NoSuchFieldException ignored) {
+                ignored.printStackTrace();
+            }
+            pair.show();
+            return pair;
+        } catch (IOException e) {
+            throw new RuntimeException(e);  // Can't happen.
+        }
+    }
+
+    @Override
+    public void stop() throws Exception {
+        bitcoin.stopAsync();
+        bitcoin.awaitTerminated();
+        // Forcibly terminate the JVM because Orchid likes to spew non-daemon threads everywhere.
+        Runtime.getRuntime().exit(0);
+    }
 
     public class OverlayUI<T> {
         public Node ui;
@@ -209,58 +254,5 @@ public class Main extends Application {
             this.controller = null;
             currentOverlay = null;
         }
-    }
-
-    @Nullable
-    private OverlayUI currentOverlay;
-
-    public <T> OverlayUI<T> overlayUI(Node node, T controller) {
-        checkGuiThread();
-        OverlayUI<T> pair = new OverlayUI<>(node, controller);
-        // Auto-magically set the overlayUI member, if it's there.
-        try {
-            controller.getClass().getField("overlayUI").set(controller, pair);
-        } catch (IllegalAccessException | NoSuchFieldException ignored) {
-        }
-        pair.show();
-        return pair;
-    }
-
-    /**
-     * Loads the FXML file with the given name, blurs out the main UI and puts this one on top.
-     */
-    public <T> OverlayUI<T> overlayUI(String name) {
-        try {
-            checkGuiThread();
-            // Load the UI from disk.
-            URL location = GuiUtils.getResource(name);
-            FXMLLoader loader = new FXMLLoader(location);
-            Pane ui = loader.load();
-            T controller = loader.getController();
-            OverlayUI<T> pair = new OverlayUI<>(ui, controller);
-            // Auto-magically set the overlayUI member, if it's there.
-            try {
-                if (controller != null)
-                    controller.getClass().getField("overlayUI").set(controller, pair);
-            } catch (IllegalAccessException | NoSuchFieldException ignored) {
-                ignored.printStackTrace();
-            }
-            pair.show();
-            return pair;
-        } catch (IOException e) {
-            throw new RuntimeException(e);  // Can't happen.
-        }
-    }
-
-    @Override
-    public void stop() throws Exception {
-        bitcoin.stopAsync();
-        bitcoin.awaitTerminated();
-        // Forcibly terminate the JVM because Orchid likes to spew non-daemon threads everywhere.
-        Runtime.getRuntime().exit(0);
-    }
-
-    public static void main(String[] args) {
-        launch(args);
     }
 }

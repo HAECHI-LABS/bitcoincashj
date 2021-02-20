@@ -17,15 +17,15 @@ public class SlpTokenBalance {
         return this.balance;
     }
 
+    public void setBalance(double newBalance) {
+        this.balance = newBalance;
+    }
+
     public void addToBalance(double amount) {
         this.balance += amount;
     }
 
     public void subtractFromBalance(double amount) {
         this.balance -= amount;
-    }
-
-    public void setBalance(double newBalance) {
-        this.balance = newBalance;
     }
 }

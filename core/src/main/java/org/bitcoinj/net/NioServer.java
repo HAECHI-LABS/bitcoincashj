@@ -36,12 +36,26 @@ import java.util.Iterator;
  */
 public class NioServer extends AbstractExecutionThreadService {
     private static final org.slf4j.Logger log = LoggerFactory.getLogger(NioServer.class);
-
-    private final StreamConnectionFactory connectionFactory;
-
-    private final ServerSocketChannel sc;
     @VisibleForTesting
     final Selector selector;
+    private final StreamConnectionFactory connectionFactory;
+    private final ServerSocketChannel sc;
+
+    /**
+     * Creates a new server which is capable of listening for incoming connections and processing client provided data
+     * using {@link StreamConnection}s created by the given {@link StreamConnectionFactory}
+     *
+     * @throws IOException If there is an issue opening the server socket or binding fails for some reason
+     */
+    public NioServer(final StreamConnectionFactory connectionFactory, InetSocketAddress bindAddress) throws IOException {
+        this.connectionFactory = connectionFactory;
+
+        sc = ServerSocketChannel.open();
+        sc.configureBlocking(false);
+        sc.socket().bind(bindAddress);
+        selector = SelectorProvider.provider().openSelector();
+        sc.register(selector, SelectionKey.OP_ACCEPT);
+    }
 
     // Handle a SelectionKey which was selected
     private void handleKey(Selector selector, SelectionKey key) throws IOException {
@@ -62,22 +76,6 @@ public class NioServer extends AbstractExecutionThreadService {
         } else { // Got a closing channel or a channel to a client connection
             ConnectionHandler.handleKey(key);
         }
-    }
-
-    /**
-     * Creates a new server which is capable of listening for incoming connections and processing client provided data
-     * using {@link StreamConnection}s created by the given {@link StreamConnectionFactory}
-     *
-     * @throws IOException If there is an issue opening the server socket or binding fails for some reason
-     */
-    public NioServer(final StreamConnectionFactory connectionFactory, InetSocketAddress bindAddress) throws IOException {
-        this.connectionFactory = connectionFactory;
-
-        sc = ServerSocketChannel.open();
-        sc.configureBlocking(false);
-        sc.socket().bind(bindAddress);
-        selector = SelectorProvider.provider().openSelector();
-        sc.register(selector, SelectionKey.OP_ACCEPT);
     }
 
     @Override

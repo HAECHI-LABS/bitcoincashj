@@ -41,7 +41,14 @@ public class BIP38PrivateKey extends PrefixedChecksummedBytes {
     public final byte[] addressHash;
     public final byte[] content;
 
-    public static final class BadPassphraseException extends Exception {
+    private BIP38PrivateKey(NetworkParameters params, byte[] bytes, boolean ecMultiply, boolean compressed,
+                            boolean hasLotAndSequence, byte[] addressHash, byte[] content) throws AddressFormatException {
+        super(params, bytes);
+        this.ecMultiply = ecMultiply;
+        this.compressed = compressed;
+        this.hasLotAndSequence = hasLotAndSequence;
+        this.addressHash = addressHash;
+        this.content = content;
     }
 
     /**
@@ -90,16 +97,6 @@ public class BIP38PrivateKey extends PrefixedChecksummedBytes {
         byte[] addressHash = Arrays.copyOfRange(bytes, 2, 6);
         byte[] content = Arrays.copyOfRange(bytes, 6, 38);
         return new BIP38PrivateKey(params, bytes, ecMultiply, compressed, hasLotAndSequence, addressHash, content);
-    }
-
-    private BIP38PrivateKey(NetworkParameters params, byte[] bytes, boolean ecMultiply, boolean compressed,
-                            boolean hasLotAndSequence, byte[] addressHash, byte[] content) throws AddressFormatException {
-        super(params, bytes);
-        this.ecMultiply = ecMultiply;
-        this.compressed = compressed;
-        this.hasLotAndSequence = hasLotAndSequence;
-        this.addressHash = addressHash;
-        this.content = content;
     }
 
     /**
@@ -191,5 +188,8 @@ public class BIP38PrivateKey extends PrefixedChecksummedBytes {
     @Override
     public String toString() {
         return toBase58();
+    }
+
+    public static final class BadPassphraseException extends Exception {
     }
 }

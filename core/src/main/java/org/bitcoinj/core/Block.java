@@ -22,7 +22,6 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import org.bitcoinj.params.AbstractBitcoinNetParams;
-import org.bitcoinj.params.UnitTestParams;
 import org.bitcoinj.script.Script;
 import org.bitcoinj.script.ScriptBuilder;
 import org.slf4j.Logger;
@@ -52,30 +51,13 @@ import static org.bitcoinj.core.Sha256Hash.hashTwice;
  */
 public class Block extends Message {
     /**
-     * Flags used to control which elements of block validation are done on
-     * received blocks.
-     */
-    public enum VerifyFlag {
-        /**
-         * Check that block height is in coinbase transaction (BIP 34).
-         */
-        HEIGHT_IN_COINBASE
-    }
-
-    private static final Logger log = LoggerFactory.getLogger(Block.class);
-
-    /**
      * How many bytes are required to represent a block header WITHOUT the trailing 00 length byte.
      */
     public static final int HEADER_SIZE = 80;
-
-    static final long ALLOWED_TIME_DRIFT = 2 * 60 * 60; // Same value as Bitcoin Core.
-
     /**
      * A value for difficultyTarget (nBits) that allows half of all possible hash solutions. Used in unit testing.
      */
     public static final long EASIEST_DIFFICULTY_TARGET = 0x207fFFFFL;
-
     /**
      * Value to use if the block height is unknown
      */
@@ -84,7 +66,6 @@ public class Block extends Message {
      * Height of the first block
      */
     public static final int BLOCK_HEIGHT_GENESIS = 0;
-
     public static final long BLOCK_VERSION_GENESIS = 1;
     /**
      * Block version introduced in BIP 34: Height in coinbase
@@ -98,7 +79,28 @@ public class Block extends Message {
      * Block version introduced in BIP 65: OP_CHECKLOCKTIMEVERIFY
      */
     public static final long BLOCK_VERSION_BIP65 = 4;
-
+    static final long ALLOWED_TIME_DRIFT = 2 * 60 * 60; // Same value as Bitcoin Core.
+    static final byte[] EMPTY_BYTES = new byte[32];
+    private static final Logger log = LoggerFactory.getLogger(Block.class);
+    // It's pretty weak to have this around at runtime: fix later.
+    private static final byte[] pubkeyForTesting = new ECKey().getPubKey();
+    /**
+     * The number that is one greater than the largest representable SHA-256
+     * hash.
+     */
+    private static BigInteger LARGEST_HASH = BigInteger.ONE.shiftLeft(256);
+    // Used to make transactions unique.
+    private static int txCounter;
+    protected boolean headerBytesValid;
+    protected boolean transactionBytesValid;
+    // Blocks can be encoded in a way that will use more bytes than is optimal (due to VarInts having multiple encodings)
+    // MAX_BLOCK_SIZE must be compared to the optimal encoding, not the actual encoding, so when parsing, we keep track
+    // of the size of the ideal encoding in addition to the actual message size (which Message needs)
+    protected int optimalEncodingMessageSize;
+    // If null, it means this object holds only the headers.
+    @VisibleForTesting
+    @Nullable
+    List<Transaction> transactions;
     // Fields defined as part of the protocol format.
     private long version;
     private Sha256Hash prevBlockHash;
@@ -106,24 +108,10 @@ public class Block extends Message {
     private long time;
     private long difficultyTarget; // "nBits"
     private long nonce;
-
-    // If null, it means this object holds only the headers.
-    @VisibleForTesting
-    @Nullable
-    List<Transaction> transactions;
-
     /**
      * Stores the hash of the block. If null, getHash() will recalculate it.
      */
     private Sha256Hash hash;
-
-    protected boolean headerBytesValid;
-    protected boolean transactionBytesValid;
-
-    // Blocks can be encoded in a way that will use more bytes than is optimal (due to VarInts having multiple encodings)
-    // MAX_BLOCK_SIZE must be compared to the optimal encoding, not the actual encoding, so when parsing, we keep track
-    // of the size of the ideal encoding in addition to the actual message size (which Message needs)
-    protected int optimalEncodingMessageSize;
 
     /**
      * Special case constructor, used for the genesis node, cloneAsHeader and unit tests.
@@ -442,12 +430,6 @@ public class Block extends Message {
     }
 
     /**
-     * The number that is one greater than the largest representable SHA-256
-     * hash.
-     */
-    private static BigInteger LARGEST_HASH = BigInteger.ONE.shiftLeft(256);
-
-    /**
      * Returns the work represented by this block.<p>
      * <p>
      * Work is defined as the number of tries needed to solve a block in the
@@ -540,7 +522,7 @@ public class Block extends Message {
      */
     public BigInteger getDifficultyTargetAsInteger() throws VerificationException {
         BigInteger target = Utils.decodeCompactBits(difficultyTarget);
-        if(getParams().getId() != NetworkParameters.ID_UNITTESTNET) {
+        if (getParams().getId() != NetworkParameters.ID_UNITTESTNET) {
             if (target.signum() <= 0 || target.compareTo(params.maxTarget) > 0)
                 throw new VerificationException("Difficulty target is bad: " + target.toString());
         }
@@ -869,6 +851,9 @@ public class Block extends Message {
         return nonce;
     }
 
+    // ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Unit testing related methods.
+
     /**
      * Sets the nonce and clears any cached data.
      */
@@ -885,12 +870,6 @@ public class Block extends Message {
     public List<Transaction> getTransactions() {
         return transactions == null ? null : ImmutableList.copyOf(transactions);
     }
-
-    // ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Unit testing related methods.
-
-    // Used to make transactions unique.
-    private static int txCounter;
 
     /**
      * Adds a coinbase transaction to the block. This exists for unit tests.
@@ -923,11 +902,6 @@ public class Block extends Message {
         coinbase.length = coinbase.unsafeBitcoinSerialize().length;
         adjustLength(transactions.size(), coinbase.length);
     }
-
-    static final byte[] EMPTY_BYTES = new byte[32];
-
-    // It's pretty weak to have this around at runtime: fix later.
-    private static final byte[] pubkeyForTesting = new ECKey().getPubKey();
 
     /**
      * Returns a solved block that builds on top of this one. This exists for unit tests.
@@ -1063,5 +1037,16 @@ public class Block extends Message {
      */
     public boolean isBIP65() {
         return version >= BLOCK_VERSION_BIP65;
+    }
+
+    /**
+     * Flags used to control which elements of block validation are done on
+     * received blocks.
+     */
+    public enum VerifyFlag {
+        /**
+         * Check that block height is in coinbase transaction (BIP 34).
+         */
+        HEIGHT_IN_COINBASE
     }
 }

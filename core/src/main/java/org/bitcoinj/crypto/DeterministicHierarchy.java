@@ -39,12 +39,11 @@ import static com.google.common.base.Preconditions.checkArgument;
  * is a list of {@link ChildNumber}s.</p>
  */
 public class DeterministicHierarchy {
+    public static final int BIP32_STANDARDISATION_TIME_SECS = 1369267200;
     private final Map<HDPath, DeterministicKey> keys = new HashMap<>();
     private final HDPath rootPath;
     // Keep track of how many child keys each node has. This is kind of weak.
     private final Map<HDPath, ChildNumber> lastChildNumbers = new HashMap<>();
-
-    public static final int BIP32_STANDARDISATION_TIME_SECS = 1369267200;
 
     /**
      * Constructs a new hierarchy rooted at the given key. Note that this does not have to be the top of the tree.

@@ -32,11 +32,10 @@ import java.util.List;
  */
 public abstract class ListMessage extends Message {
 
-    private long arrayLen;
+    public static final long MAX_INVENTORY_ITEMS = 50000;
     // For some reason the compiler complains if this is inside InventoryItem
     protected List<InventoryItem> items;
-
-    public static final long MAX_INVENTORY_ITEMS = 50000;
+    private long arrayLen;
 
     public ListMessage(NetworkParameters params, byte[] bytes) throws ProtocolException {
         super(params, bytes, 0);

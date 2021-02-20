@@ -43,17 +43,63 @@ public class Threading {
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     /**
+     * A dummy executor that just invokes the runnable immediately. Use this over more complex executors
+     * (e.g. those extending {@link ExecutorService}), which are overkill for our needs.
+     */
+    public static final Executor SAME_THREAD;
+    /**
      * An executor with one thread that is intended for running event listeners on. This ensures all event listener code
      * runs without any locks being held. It's intended for the API user to run things on. Callbacks registered by
      * bitcoinj internally shouldn't normally run here, although currently there are a few exceptions.
      */
     public static Executor USER_THREAD;
-
     /**
-     * A dummy executor that just invokes the runnable immediately. Use this over more complex executors
-     * (e.g. those extending {@link ExecutorService}), which are overkill for our needs.
+     * An exception handler that will be invoked for any exceptions that occur in the user thread, and
+     * any unhandled exceptions that are caught whilst the framework is processing network traffic or doing other
+     * background tasks. The purpose of this is to allow you to report back unanticipated crashes from your users
+     * to a central collection center for analysis and debugging. You should configure this <b>before</b> any
+     * bitcoinj library code is run, setting it after you started network traffic and other forms of processing
+     * may result in the change not taking effect.
      */
-    public static final Executor SAME_THREAD;
+    @Nullable
+    public static volatile Thread.UncaughtExceptionHandler uncaughtExceptionHandler;
+    public static CycleDetectingLockFactory factory;
+    /**
+     * A caching thread pool that creates daemon threads, which won't keep the JVM alive waiting for more work.
+     */
+    public static ListeningExecutorService THREAD_POOL = MoreExecutors.listeningDecorator(
+            Executors.newCachedThreadPool(new ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r);
+                    t.setName("Threading.THREAD_POOL worker");
+                    t.setDaemon(true);
+                    return t;
+                }
+            })
+    );
+    private static CycleDetectingLockFactory.Policy policy;
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //
+    // Cycle detecting lock factories
+    //
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    static {
+        // Default policy goes here. If you want to change this, use one of the static methods before
+        // instantiating any bitcoinj objects. The policy change will take effect only on new objects
+        // from that point onwards.
+        throwOnLockCycles();
+
+        USER_THREAD = new UserThread();
+        SAME_THREAD = new Executor() {
+            @Override
+            public void execute(@Nonnull Runnable runnable) {
+                runnable.run();
+            }
+        };
+    }
 
     /**
      * Put a dummy task into the queue and wait for it to be run. Because it's single threaded, this means all
@@ -73,16 +119,43 @@ public class Threading {
         Uninterruptibles.awaitUninterruptibly(latch);
     }
 
-    /**
-     * An exception handler that will be invoked for any exceptions that occur in the user thread, and
-     * any unhandled exceptions that are caught whilst the framework is processing network traffic or doing other
-     * background tasks. The purpose of this is to allow you to report back unanticipated crashes from your users
-     * to a central collection center for analysis and debugging. You should configure this <b>before</b> any
-     * bitcoinj library code is run, setting it after you started network traffic and other forms of processing
-     * may result in the change not taking effect.
-     */
-    @Nullable
-    public static volatile Thread.UncaughtExceptionHandler uncaughtExceptionHandler;
+    public static ReentrantLock lock(Class clazz) {
+        return lock(clazz.getSimpleName() + " lock");
+    }
+
+    public static ReentrantLock lock(String name) {
+        if (Utils.isAndroidRuntime())
+            return new ReentrantLock(true);
+        else
+            return factory.newReentrantLock(name);
+    }
+
+    public static void warnOnLockCycles() {
+        setPolicy(CycleDetectingLockFactory.Policies.WARN);
+    }
+
+    public static void throwOnLockCycles() {
+        setPolicy(CycleDetectingLockFactory.Policies.THROW);
+    }
+
+    public static void ignoreLockCycles() {
+        setPolicy(CycleDetectingLockFactory.Policies.DISABLED);
+    }
+
+    public static CycleDetectingLockFactory.Policy getPolicy() {
+        return policy;
+    }
+
+    public static void setPolicy(CycleDetectingLockFactory.Policy policy) {
+        Threading.policy = policy;
+        factory = CycleDetectingLockFactory.newInstance(policy);
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //
+    // Generic worker pool.
+    //
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     public static class UserThread extends Thread implements Executor {
         private static final Logger log = LoggerFactory.getLogger(UserThread.class);
@@ -127,81 +200,4 @@ public class Threading {
             Uninterruptibles.putUninterruptibly(tasks, command);
         }
     }
-
-    static {
-        // Default policy goes here. If you want to change this, use one of the static methods before
-        // instantiating any bitcoinj objects. The policy change will take effect only on new objects
-        // from that point onwards.
-        throwOnLockCycles();
-
-        USER_THREAD = new UserThread();
-        SAME_THREAD = new Executor() {
-            @Override
-            public void execute(@Nonnull Runnable runnable) {
-                runnable.run();
-            }
-        };
-    }
-
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //
-    // Cycle detecting lock factories
-    //
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    private static CycleDetectingLockFactory.Policy policy;
-    public static CycleDetectingLockFactory factory;
-
-    public static ReentrantLock lock(Class clazz) {
-        return lock(clazz.getSimpleName() + " lock");
-    }
-
-    public static ReentrantLock lock(String name) {
-        if (Utils.isAndroidRuntime())
-            return new ReentrantLock(true);
-        else
-            return factory.newReentrantLock(name);
-    }
-
-    public static void warnOnLockCycles() {
-        setPolicy(CycleDetectingLockFactory.Policies.WARN);
-    }
-
-    public static void throwOnLockCycles() {
-        setPolicy(CycleDetectingLockFactory.Policies.THROW);
-    }
-
-    public static void ignoreLockCycles() {
-        setPolicy(CycleDetectingLockFactory.Policies.DISABLED);
-    }
-
-    public static void setPolicy(CycleDetectingLockFactory.Policy policy) {
-        Threading.policy = policy;
-        factory = CycleDetectingLockFactory.newInstance(policy);
-    }
-
-    public static CycleDetectingLockFactory.Policy getPolicy() {
-        return policy;
-    }
-
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //
-    // Generic worker pool.
-    //
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    /**
-     * A caching thread pool that creates daemon threads, which won't keep the JVM alive waiting for more work.
-     */
-    public static ListeningExecutorService THREAD_POOL = MoreExecutors.listeningDecorator(
-            Executors.newCachedThreadPool(new ThreadFactory() {
-                @Override
-                public Thread newThread(Runnable r) {
-                    Thread t = new Thread(r);
-                    t.setName("Threading.THREAD_POOL worker");
-                    t.setDaemon(true);
-                    return t;
-                }
-            })
-    );
 }

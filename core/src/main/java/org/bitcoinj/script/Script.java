@@ -1531,7 +1531,7 @@ public class Script {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        } catch(Exception e) {
+        } catch (Exception e) {
             // There is (at least) one exception that could be hit here (EOFException, if the sig is too short)
             // Because I can't verify there aren't more, we use a very generic Exception catch
 
@@ -1693,7 +1693,7 @@ public class Script {
                     usingSchnorr = false;
                     e1.printStackTrace();
                 }
-            } catch(Exception e) {
+            } catch (Exception e) {
                 e.printStackTrace();
             }
 
@@ -1706,7 +1706,7 @@ public class Script {
 
         // We uselessly remove a stack object to emulate a Bitcoin Core bug.
         // This only applies to non-Schnorr multisig inputs
-        if(!usingSchnorr) {
+        if (!usingSchnorr) {
             byte[] nullDummy = stack.pollLast();
             if (verifyFlags.contains(VerifyFlag.NULLDUMMY) && nullDummy.length > 0)
                 throw new ScriptException(ScriptError.SCRIPT_ERR_SIG_NULLFAIL, "OP_CHECKMULTISIG(VERIFY) with non-null nulldummy: " + Arrays.toString(nullDummy));

@@ -50,7 +50,9 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
      * Keeps a map of block hashes to StoredBlocks.
      */
     protected final FullPrunedBlockStore blockStore;
-
+    // TODO: execute in order of largest transaction (by input count) first
+    ExecutorService scriptVerificationExecutor = Executors.newFixedThreadPool(
+            Runtime.getRuntime().availableProcessors(), new ContextPropagatingThreadFactory("Script verification"));
     // Whether or not to execute scriptPubKeys before accepting a transaction (i.e. check signatures).
     private boolean runScripts = true;
 
@@ -131,6 +133,8 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
         return true;
     }
 
+    // TODO: Remove lots of duplicated code in the two connectTransactions
+
     /**
      * Whether or not to run scripts whilst accepting blocks (i.e. checking signatures, for most transactions).
      * If you're accepting data from an untrusted node, such as one found via the P2P network, this should be set
@@ -140,42 +144,6 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
      */
     public void setRunScripts(boolean value) {
         this.runScripts = value;
-    }
-
-    // TODO: Remove lots of duplicated code in the two connectTransactions
-
-    // TODO: execute in order of largest transaction (by input count) first
-    ExecutorService scriptVerificationExecutor = Executors.newFixedThreadPool(
-            Runtime.getRuntime().availableProcessors(), new ContextPropagatingThreadFactory("Script verification"));
-
-    /**
-     * A job submitted to the executor which verifies signatures.
-     */
-    private static class Verifier implements Callable<VerificationException> {
-        final Transaction tx;
-        final List<Script> prevOutScripts;
-        final Set<VerifyFlag> verifyFlags;
-
-        public Verifier(final Transaction tx, final List<Script> prevOutScripts, final Set<VerifyFlag> verifyFlags) {
-            this.tx = tx;
-            this.prevOutScripts = prevOutScripts;
-            this.verifyFlags = verifyFlags;
-        }
-
-        @Nullable
-        @Override
-        public VerificationException call() throws Exception {
-            try {
-                ListIterator<Script> prevOutIt = prevOutScripts.listIterator();
-                for (int index = 0; index < tx.getInputs().size(); index++) {
-                    Coin value = tx.getInput(index).getConnectedOutput() != null ? tx.getInput(index).getConnectedOutput().getValue() : Coin.ZERO;
-                    tx.getInputs().get(index).getScriptSig().correctlySpends(tx, index, prevOutIt.next(), value, verifyFlags);
-                }
-            } catch (VerificationException e) {
-                return e;
-            }
-            return null;
-        }
     }
 
     /**
@@ -516,5 +484,35 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
     protected StoredBlock getStoredBlockInCurrentScope(Sha256Hash hash) throws BlockStoreException {
         checkState(lock.isHeldByCurrentThread());
         return blockStore.getOnceUndoableStoredBlock(hash);
+    }
+
+    /**
+     * A job submitted to the executor which verifies signatures.
+     */
+    private static class Verifier implements Callable<VerificationException> {
+        final Transaction tx;
+        final List<Script> prevOutScripts;
+        final Set<VerifyFlag> verifyFlags;
+
+        public Verifier(final Transaction tx, final List<Script> prevOutScripts, final Set<VerifyFlag> verifyFlags) {
+            this.tx = tx;
+            this.prevOutScripts = prevOutScripts;
+            this.verifyFlags = verifyFlags;
+        }
+
+        @Nullable
+        @Override
+        public VerificationException call() throws Exception {
+            try {
+                ListIterator<Script> prevOutIt = prevOutScripts.listIterator();
+                for (int index = 0; index < tx.getInputs().size(); index++) {
+                    Coin value = tx.getInput(index).getConnectedOutput() != null ? tx.getInput(index).getConnectedOutput().getValue() : Coin.ZERO;
+                    tx.getInputs().get(index).getScriptSig().correctlySpends(tx, index, prevOutIt.next(), value, verifyFlags);
+                }
+            } catch (VerificationException e) {
+                return e;
+            }
+            return null;
+        }
     }
 }

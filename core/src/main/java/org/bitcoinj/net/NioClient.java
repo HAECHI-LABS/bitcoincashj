@@ -38,6 +38,42 @@ public class NioClient implements MessageWriteTarget {
     private final Handler handler;
     private final NioClientManager manager = new NioClientManager();
 
+    /**
+     * <p>Creates a new client to the given server address using the given {@link StreamConnection} to decode the data.
+     * The given connection <b>MUST</b> be unique to this object. This does not block while waiting for the connection to
+     * open, but will call either the {@link StreamConnection#connectionOpened()} or
+     * {@link StreamConnection#connectionClosed()} callback on the created network event processing thread.</p>
+     *
+     * @param connectTimeoutMillis The connect timeout set on the connection (in milliseconds). 0 is interpreted as no
+     *                             timeout.
+     */
+    public NioClient(final SocketAddress serverAddress, final StreamConnection parser,
+                     final int connectTimeoutMillis) throws IOException {
+        manager.startAsync();
+        manager.awaitRunning();
+        handler = new Handler(parser, connectTimeoutMillis);
+        Futures.addCallback(manager.openConnection(serverAddress, handler), new FutureCallback<SocketAddress>() {
+            @Override
+            public void onSuccess(SocketAddress result) {
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                log.error("Connect to {} failed: {}", serverAddress, Throwables.getRootCause(t));
+            }
+        }, MoreExecutors.directExecutor());
+    }
+
+    @Override
+    public void closeConnection() {
+        handler.writeTarget.closeConnection();
+    }
+
+    @Override
+    public synchronized ListenableFuture writeBytes(byte[] message) throws IOException {
+        return handler.writeTarget.writeBytes(message);
+    }
+
     class Handler extends AbstractTimeoutHandler implements StreamConnection {
         private final StreamConnection upstreamConnection;
         private MessageWriteTarget writeTarget;
@@ -91,41 +127,5 @@ public class NioClient implements MessageWriteTarget {
         public int getMaxMessageSize() {
             return upstreamConnection.getMaxMessageSize();
         }
-    }
-
-    /**
-     * <p>Creates a new client to the given server address using the given {@link StreamConnection} to decode the data.
-     * The given connection <b>MUST</b> be unique to this object. This does not block while waiting for the connection to
-     * open, but will call either the {@link StreamConnection#connectionOpened()} or
-     * {@link StreamConnection#connectionClosed()} callback on the created network event processing thread.</p>
-     *
-     * @param connectTimeoutMillis The connect timeout set on the connection (in milliseconds). 0 is interpreted as no
-     *                             timeout.
-     */
-    public NioClient(final SocketAddress serverAddress, final StreamConnection parser,
-                     final int connectTimeoutMillis) throws IOException {
-        manager.startAsync();
-        manager.awaitRunning();
-        handler = new Handler(parser, connectTimeoutMillis);
-        Futures.addCallback(manager.openConnection(serverAddress, handler), new FutureCallback<SocketAddress>() {
-            @Override
-            public void onSuccess(SocketAddress result) {
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-                log.error("Connect to {} failed: {}", serverAddress, Throwables.getRootCause(t));
-            }
-        }, MoreExecutors.directExecutor());
-    }
-
-    @Override
-    public void closeConnection() {
-        handler.writeTarget.closeConnection();
-    }
-
-    @Override
-    public synchronized ListenableFuture writeBytes(byte[] message) throws IOException {
-        return handler.writeTarget.writeBytes(message);
     }
 }

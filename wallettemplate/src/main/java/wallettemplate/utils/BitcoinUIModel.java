@@ -25,8 +25,6 @@ import org.bitcoinj.core.Address;
 import org.bitcoinj.core.Coin;
 import org.bitcoinj.core.listeners.DownloadProgressTracker;
 import org.bitcoinj.wallet.Wallet;
-import org.bitcoinj.wallet.listeners.CurrentKeyChangeEventListener;
-import org.bitcoinj.wallet.listeners.WalletChangeEventListener;
 
 import java.util.Date;
 
@@ -61,20 +59,6 @@ public class BitcoinUIModel {
         address.set(wallet.currentReceiveAddress());
     }
 
-    private class ProgressBarUpdater extends DownloadProgressTracker {
-        @Override
-        protected void progress(double pct, int blocksLeft, Date date) {
-            super.progress(pct, blocksLeft, date);
-            Platform.runLater(() -> syncProgress.set(pct / 100.0));
-        }
-
-        @Override
-        protected void doneDownload() {
-            super.doneDownload();
-            Platform.runLater(() -> syncProgress.set(1.0));
-        }
-    }
-
     public DownloadProgressTracker getDownloadProgressTracker() {
         return syncProgressUpdater;
     }
@@ -89,5 +73,19 @@ public class BitcoinUIModel {
 
     public ReadOnlyObjectProperty<Coin> balanceProperty() {
         return balance;
+    }
+
+    private class ProgressBarUpdater extends DownloadProgressTracker {
+        @Override
+        protected void progress(double pct, int blocksLeft, Date date) {
+            super.progress(pct, blocksLeft, date);
+            Platform.runLater(() -> syncProgress.set(pct / 100.0));
+        }
+
+        @Override
+        protected void doneDownload() {
+            super.doneDownload();
+            Platform.runLater(() -> syncProgress.set(1.0));
+        }
     }
 }

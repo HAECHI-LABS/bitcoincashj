@@ -1,12 +1,17 @@
 package org.bitcoinj.core.flipstarter;
 
 import java.util.ArrayList;
-import java.util.List;
 
 public class FlipstarterPledgePayload {
     public ArrayList<Input> inputs;
     public Data data;
     public String data_signature;
+
+    public FlipstarterPledgePayload(ArrayList<Input> inputs, Data data, String dataSignature) {
+        this.inputs = inputs;
+        this.data = data;
+        this.data_signature = dataSignature;
+    }
 
     public static class Input {
         public String previous_output_transaction_hash;
@@ -30,11 +35,5 @@ public class FlipstarterPledgePayload {
             this.alias = alias;
             this.comment = comment;
         }
-    }
-
-    public FlipstarterPledgePayload(ArrayList<Input> inputs, Data data, String dataSignature) {
-        this.inputs = inputs;
-        this.data = data;
-        this.data_signature = dataSignature;
     }
 }

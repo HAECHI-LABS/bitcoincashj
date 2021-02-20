@@ -19,7 +19,6 @@ package org.bitcoinj.examples;
 import org.bitcoinj.core.*;
 import org.bitcoinj.core.bip47.BIP47Channel;
 import org.bitcoinj.kits.BIP47AppKit;
-import org.bitcoinj.kits.SlpAppKit;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.wallet.SendRequest;
 import org.bitcoinj.wallet.Wallet;
@@ -34,6 +33,7 @@ import java.io.File;
  */
 public class SendingToBip47 {
     private static BIP47AppKit kit;
+
     public static void main(String[] args) throws InsufficientMoneyException {
 
         // First we configure the network we want to use.

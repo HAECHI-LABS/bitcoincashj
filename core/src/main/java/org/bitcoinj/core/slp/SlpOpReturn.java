@@ -25,13 +25,6 @@ public class SlpOpReturn {
     public static final int mintBatonVoutGenesisChunkLocation = 9;
     public static final int mintBatonVoutMintChunkLocation = 5;
     public static final int tokenOutputsStartLocation = 5;
-
-    public enum SlpTxType {
-        GENESIS,
-        MINT,
-        SEND
-    }
-
     private Script opReturn;
     private String tokenId;
     private Transaction tx;
@@ -40,7 +33,6 @@ public class SlpOpReturn {
     private boolean hasMintingBaton = false;
     private TransactionOutput mintingBatonUtxo = null;
     private int mintingBatonVout = 0;
-
     public SlpOpReturn(Transaction tx) {
         this.tx = tx;
         opReturn = tx.getOutput(opReturnLocation).getScriptPubKey();
@@ -52,18 +44,6 @@ public class SlpOpReturn {
             this.findMintingBaton(opReturn);
         } else {
             throw new NullPointerException("Not an SLP transaction.");
-        }
-    }
-
-    private void setTokenId(Script opReturn) {
-        if (ScriptPattern.isOpReturn(opReturn)) {
-            if (this.getSlpTxType() == SlpTxType.SEND || this.getSlpTxType() == SlpTxType.MINT) {
-                ScriptChunk tokenIdChunk = opReturn.getChunks().get(tokenIdChunkLocation);
-                assert tokenIdChunk.data != null;
-                this.tokenId = new String(Hex.encode(tokenIdChunk.data));
-            } else if (this.getSlpTxType() == SlpTxType.GENESIS) {
-                this.tokenId = this.tx.getTxId().toString();
-            }
         }
     }
 
@@ -86,32 +66,6 @@ public class SlpOpReturn {
         }
 
         return false;
-    }
-
-    private void setSlpTxType(Script opReturn) {
-        if (ScriptPattern.isOpReturn(opReturn)) {
-            ScriptChunk protocolChunk = opReturn.getChunks().get(protocolChunkLocation);
-            if (protocolChunk != null && protocolChunk.data != null) {
-                String protocolId = new String(Hex.encode(protocolChunk.data), StandardCharsets.UTF_8);
-                if (protocolId.equals(slpProtocolId)) {
-                    ScriptChunk slpTxTypeChunk = opReturn.getChunks().get(slpTxTypeChunkLocation);
-                    if (slpTxTypeChunk != null && slpTxTypeChunk.data != null) {
-                        String txType = new String(Hex.encode(slpTxTypeChunk.data), StandardCharsets.UTF_8);
-                        switch (txType) {
-                            case genesisTxTypeId:
-                                this.slpTxType = SlpTxType.GENESIS;
-                                break;
-                            case mintTxTypeId:
-                                this.slpTxType = SlpTxType.MINT;
-                                break;
-                            case sendTxTypeId:
-                                this.slpTxType = SlpTxType.SEND;
-                                break;
-                        }
-                    }
-                }
-            }
-        }
     }
 
     private void collectSlpUtxos(Script opReturn) {
@@ -172,6 +126,18 @@ public class SlpOpReturn {
         return this.tokenId;
     }
 
+    private void setTokenId(Script opReturn) {
+        if (ScriptPattern.isOpReturn(opReturn)) {
+            if (this.getSlpTxType() == SlpTxType.SEND || this.getSlpTxType() == SlpTxType.MINT) {
+                ScriptChunk tokenIdChunk = opReturn.getChunks().get(tokenIdChunkLocation);
+                assert tokenIdChunk.data != null;
+                this.tokenId = new String(Hex.encode(tokenIdChunk.data));
+            } else if (this.getSlpTxType() == SlpTxType.GENESIS) {
+                this.tokenId = this.tx.getTxId().toString();
+            }
+        }
+    }
+
     public int getSlpUtxos() {
         return this.slpUtxos;
     }
@@ -182,6 +148,32 @@ public class SlpOpReturn {
 
     public SlpTxType getSlpTxType() {
         return this.slpTxType;
+    }
+
+    private void setSlpTxType(Script opReturn) {
+        if (ScriptPattern.isOpReturn(opReturn)) {
+            ScriptChunk protocolChunk = opReturn.getChunks().get(protocolChunkLocation);
+            if (protocolChunk != null && protocolChunk.data != null) {
+                String protocolId = new String(Hex.encode(protocolChunk.data), StandardCharsets.UTF_8);
+                if (protocolId.equals(slpProtocolId)) {
+                    ScriptChunk slpTxTypeChunk = opReturn.getChunks().get(slpTxTypeChunkLocation);
+                    if (slpTxTypeChunk != null && slpTxTypeChunk.data != null) {
+                        String txType = new String(Hex.encode(slpTxTypeChunk.data), StandardCharsets.UTF_8);
+                        switch (txType) {
+                            case genesisTxTypeId:
+                                this.slpTxType = SlpTxType.GENESIS;
+                                break;
+                            case mintTxTypeId:
+                                this.slpTxType = SlpTxType.MINT;
+                                break;
+                            case sendTxTypeId:
+                                this.slpTxType = SlpTxType.SEND;
+                                break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     public int getMintingBatonVout() {
@@ -198,5 +190,11 @@ public class SlpOpReturn {
 
     public TransactionOutput getMintingBatonUtxo() {
         return this.mintingBatonUtxo;
+    }
+
+    public enum SlpTxType {
+        GENESIS,
+        MINT,
+        SEND
     }
 }
